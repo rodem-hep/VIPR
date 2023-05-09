@@ -1,0 +1,25 @@
+__pycache__
+*.pyc
+*.egg-info
+*.ipynb_checkpoints
+*.h5
+*.tfrecords
+*.csv
+*.pdf
+*.png
+*.svg
+*.log
+*.DS_Store
+doc/*
+.eggs/
+build/*
+dist/*
+plots/*
+env/*
+.vscode/*
+python_install/
+# ignoring preprocessing integration test folders
+jobs/
+install_*/
+test_data/
+*_batch/

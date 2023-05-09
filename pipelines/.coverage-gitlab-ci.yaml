@@ -1,0 +1,69 @@
+# ----------------------------------------------------------------------------
+# everything related to code coverage reports
+# ----------------------------------------------------------------------------
+
+.coverage_dependencies: &coverage_dependencies
+  - unittest_utils
+
+
+test_coverage:
+  stage: coverage_test_stage
+  image: $SLIM_IMAGE
+  script:
+    - pip install --upgrade pip setuptools wheel
+    - pip install pytest==6.2.4
+    - pip install pytest-cov==2.12.0
+    - cd ./coverage_files/
+    - coverage combine
+    - coverage report
+    - coverage xml
+    - coverage html
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PROJECT_PATH=="atlas-flavor-tagging-tools/algorithms/umami"
+  artifacts:
+    when: always
+    paths:
+      - coverage_files/
+#    reports:
+#      cobertura: coverage_files/coverage.xml
+  retry: 2
+  needs: *coverage_dependencies
+  dependencies: *coverage_dependencies
+
+# Add this as soon as more CI is set up
+# coverage_html_report:
+#   stage: builds
+#   image: gitlab-registry.cern.ch/ci-tools/ci-web-deployer
+#   script:
+#     - deploy-eos
+#   needs:
+#     - test_coverage
+#   dependencies:
+#     - test_coverage
+#   rules:
+#     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PROJECT_PATH=="atlas-flavor-tagging-tools/algorithms/umami"
+#       variables:
+#         EOS_PATH: "/eos/user/u/umamibot/www/coverage_reports/master/"
+#         CI_OUTPUT_DIR: "coverage_files/htmlcov/"
+#         METHOD: rsync
+#     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PROJECT_PATH=="atlas-flavor-tagging-tools/algorithms/umami"
+#       variables:
+#         EOS_PATH: "/eos/user/u/umamibot/www/coverage_reports/${CI_MERGE_REQUEST_IID}/"
+#         CI_OUTPUT_DIR: "coverage_files/htmlcov/"
+#         METHOD: rsync
+#   retry: 2
+
+# test_coverage_post_report:
+#   stage: publish
+#   image: $SLIM_IMAGE
+#   needs: ["coverage_html_report"]
+#   dependencies:
+#     - coverage_html_report
+#   before_script:
+#     - pip install --upgrade pip setuptools wheel
+#     - pip install python-gitlab
+#   rules:
+#     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PROJECT_PATH=="atlas-flavor-tagging-tools/algorithms/umami"
+#   script:
+#     - python pipelines/gitlab-mr-coverage-api-post.py

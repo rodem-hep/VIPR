@@ -1,0 +1,39 @@
+unittest:
+  stage: unit_test
+  image: pytorch/pytorch:$TORCHTAG
+  script:
+    - pip install -r requirements.txt
+    - apt-get update
+    - apt-get install -y wget
+    - python setup.py develop
+    - pytest ./otcalib/tests/unit/ -v -s
+  rules:
+    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "merge_request_event"
+
+.unittest_template: &unittest_template
+  stage: unit_test
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PROJECT_PATH=="mguth/otcalib"
+  image: '${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/otcalib/$IMAGE_TYPE'
+  dependencies:
+    - linter
+    - build_image_base_MR
+  before_script:
+    - python setup.py develop
+  script:
+    - pytest --cov=./ --cov-report= ./otcalib/tests/unit/$UNIT_TEST_MODULE/ -v -s --junitxml=report.xml
+    - cp .coverage coverage_files/.coverage.unittest_$UNIT_TEST_MODULE
+  artifacts:
+    when: always
+    paths:
+      - coverage_files/
+    reports:
+      junit: report.xml
+  retry: 2
+
+
+unittest_utils:
+  <<: *unittest_template
+  variables:
+    UNIT_TEST_MODULE: utils

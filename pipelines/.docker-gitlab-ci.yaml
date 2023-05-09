@@ -1,0 +1,99 @@
+.image_build_template: &image_build_template
+  script:
+    # Prepare Kaniko configuration file
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    # Build and push the image from the Dockerfile at the root of the project.
+    - /kaniko/executor --context $CI_PROJECT_DIR
+      --dockerfile ${DOCKER_FILE}
+      --build-arg ${BASE}
+      --destination ${IMAGE_DESTINATION}
+    # Print the full registry path of the pushed image
+    - echo "Image pushed successfully to ${IMAGE_DESTINATION}"
+  image:
+    # We recommend using the CERN version of the Kaniko image: gitlab-registry.cern.ch/ci-tools/docker-image-builder
+    name: gitlab-registry.cern.ch/ci-tools/docker-image-builder
+    entrypoint: [""]
+  retry: 2
+
+.requirement_changes: &requirement_changes
+  changes:
+    - requirements.txt
+    - docker/base/Dockerfile
+    - pipelines/.docker-gitlab-ci.yaml
+    - .gitlab-ci.yml
+
+build_base_gpu:
+  <<: *image_build_template
+  stage: image_build_base
+  variables:
+    BASE: 'BASE_IMAGE=pytorch/pytorch:$TORCHTAG'
+    DOCKER_FILE: docker/base/Dockerfile
+    IMAGE_DESTINATION: '${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/ot-framework/otcalibbase:latest'
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      <<: *requirement_changes
+    - if: $CI_COMMIT_TAG
+      variables:
+        IMAGE_DESTINATION: '${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/ot-framework/otcalibbase:$CI_COMMIT_REF_SLUG'
+
+build_image_base_plus:
+  <<: *image_build_template
+  stage: image_build_base
+  variables:
+    BASE: 'BASE_IMAGE=${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/ot-framework/otcalibbase:latest'
+    DOCKER_FILE: docker/base-plus/Dockerfile
+    IMAGE_DESTINATION: '${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/ot-framework/otcalibbase-plus:latest'
+  needs:
+    - job: build_base_gpu
+      optional: true
+  dependencies:
+    - build_base_gpu
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - additional_requirements.txt
+        - docker/base-plus/Dockerfile
+        - requirements.txt
+        - docker/base/Dockerfile
+        - .gitlab-ci.yml
+        - pipelines/.docker-gitlab-ci.yaml
+    - if: $CI_COMMIT_TAG
+      variables:
+        BASE: '${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/ot-framework/otcalibbase:$CI_COMMIT_REF_SLUG'
+        IMAGE_DESTINATION: '${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/ot-framework/otcalibbase:$CI_COMMIT_REF_SLUG'
+
+build_otcalib_image:
+  <<: *image_build_template
+  stage: image_build_otcalib
+  variables:
+    BASE: 'BASE_IMAGE=${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/ot-framework/otcalibbase:latest'
+    DOCKER_FILE: docker/otcalib/Dockerfile
+    IMAGE_DESTINATION: '${CI_REGISTRY_IMAGE}:latest'
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+      variables:
+        BASE: 'BASE_IMAGE=${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/ot-framework/otcalibbase:$CI_COMMIT_REF_SLUG'
+        IMAGE_DESTINATION: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+
+
+# Base images for merge requests (MRs): used for tests in MRs,
+# will be deleted on regular basis from the gitlab registry
+# as they are only used for tests in the MR pipeline
+build_image_base_MR:
+  <<: *image_build_template
+  stage: image_build_base
+  variables:
+    BASE: 'BASE_IMAGE=pytorch/pytorch:$TORCHTAG'
+    DOCKER_FILE: docker/base/Dockerfile
+    IMAGE_DESTINATION: '${CI_REGISTRY}/${CI_PROJECT_NAMESPACE}/otcalib/temporary_images:${CI_MERGE_REQUEST_IID}-base'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_PROJECT_PATH=="mguth/otcalib"
+      <<: *requirement_changes
+      variables:
+        IMAGE_TYPE: temporary_images:${CI_MERGE_REQUEST_IID}-base
+  after_script:
+    - echo "IMAGE_TYPE=$IMAGE_TYPE" >> build.env
+  artifacts:
+    reports:
+      dotenv: build.env
