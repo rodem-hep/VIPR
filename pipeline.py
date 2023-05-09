@@ -1,13 +1,13 @@
-import math
+# import math
 import matplotlib.pyplot as plt
-import tensorflow as tf
-import tensorflow_datasets as tfds
+# import tensorflow as tf
+# import tensorflow_datasets as tfds
 from torchvision import datasets,transforms
 import torch as T
 from tools import misc
 
-from tensorflow import keras
-from keras import layers
+# from tensorflow import keras
+# from keras import layers
 
 # def preprocess_image(data, image_size=64):
 #     # center crop image
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     #                                 config.dataset_repetitions,
     #                                 config.batch_size,
     #                                 "train[80%:]+validation[80%:]+test[80%:]")
-    images = prepare_dataset()
+    images = ImagePipeline()
     import matplotlib.pyplot as plt
     for i in range(10):
         plt.figure()

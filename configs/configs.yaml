@@ -1,5 +1,5 @@
 # data
-dataset_name : "oxford_flowers102"
+dataset_name : "cifar10"
 dataset_repetitions : 5
 num_epochs : 50  # train for at least 50 epochs for good results
 # KID : Kernel Inception Distance, see related section
