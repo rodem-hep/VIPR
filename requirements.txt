@@ -8,6 +8,7 @@ isort==5.9.3
 jupyter==1.0.0
 matplotlib>=3.4.2
 numpy
+numba
 pandas==1.1.5
 pylint==2.12.2
 pytest-cov==2.12.0
