@@ -1,7 +1,7 @@
 # Tag of TensorFlow base image
 # https://pypi.org/project/tensorflow/#history
 variables:
-  TORCHTAG: 1.13.0-cuda11.6-cudnn8-runtime
+  TORCHTAG: 2.0.0-cuda11.7-cudnn8-runtime
   IMAGE_TYPE: otcalibbase:latest
   SLIM_IMAGE: python:3.8-slim
 
