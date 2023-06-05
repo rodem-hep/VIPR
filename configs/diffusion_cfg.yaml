@@ -1,0 +1,20 @@
+# dataset_repetitions : 5
+# num_epochs : 100  # train for at least 50 epochs for good results
+# plot_diffusion_steps : 20
+# batch_size: 64
+# device: cuda
+
+# architecture
+
+# diffusion
+diffusion_config:
+  # sampling
+  # image_size : 32
+  min_signal_rate : 0.02
+  max_signal_rate : 0.95
+
+  # optimization
+  ema : 0.999
+  learning_rate : 1e-3
+  weight_decay : 1e-4
+

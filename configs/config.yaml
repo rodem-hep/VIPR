@@ -1,0 +1,21 @@
+hydra:
+  run:
+    dir: ${save_path}
+
+path: /home/users/a/algren/scratch/trained_networks/diffusion/
+save_path: ${path}/${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+device: cuda
+
+
+defaults:
+  - _self_
+  - diffusion_cfg
+  - unet_cfg
+  - data_cfg
+  - train_cfg
+
+wandb:
+  project: unet-diffusion
+  entity: malteal
+  mode: online # online offline
+  name: afhq_v2_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}

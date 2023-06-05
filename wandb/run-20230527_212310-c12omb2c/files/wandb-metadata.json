@@ -1,0 +1,165 @@
+{
+    "os": "Linux-4.18.0-425.3.1.el8.x86_64-x86_64-with-glibc2.27",
+    "python": "3.9.12",
+    "heartbeatAt": "2023-05-27T19:23:11.997729",
+    "startedAt": "2023-05-27T19:23:10.928631",
+    "docker": null,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "/home/users/a/algren/work/diffusion/diffusion.py",
+    "codePath": "diffusion.py",
+    "git": {
+        "remote": "ssh://gitlab.cern.ch:7999/malgren/diffusion.git",
+        "commit": "fea886639f15d554544536893e728b3b426bb381"
+    },
+    "email": "malte.algren@cern.ch",
+    "root": "/home/users/a/algren/work/diffusion",
+    "host": "gpu012.baobab",
+    "username": "algren",
+    "executable": "/opt/conda/bin/python",
+    "cpu_count": 24,
+    "cpu_count_logical": 24,
+    "cpu_freq": {
+        "current": 3026.9487499999996,
+        "min": 3300.0,
+        "max": 3300.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2910.563,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2908.739,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2911.328,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2913.681,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2842.325,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2867.915,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2866.13,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2858.735,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2823.956,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2836.51,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2854.983,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2859.916,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3184.781,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3263.704,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2935.788,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 2986.727,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3108.882,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3046.525,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3227.948,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3174.36,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3184.633,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3194.85,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3208.181,
+            "min": 3300.0,
+            "max": 3300.0
+        },
+        {
+            "current": 3279.17,
+            "min": 3300.0,
+            "max": 3300.0
+        }
+    ],
+    "disk": {
+        "total": 0.015625,
+        "used": 1.1444091796875e-05
+    },
+    "gpu": "NVIDIA GeForce RTX 2080 Ti",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA GeForce RTX 2080 Ti",
+            "memory_total": 11811160064
+        }
+    ],
+    "memory": {
+        "total": 251.76498413085938
+    }
+}

@@ -42,19 +42,22 @@ from tools import misc
 #     )
 class ImagePipeline:
     def __init__(self, dataset_name):
+        data_path = "/home/users/a/algren/work/diffusion/test_data/"
         if dataset_name.lower()=="oxford_flowers102":
-            self.data = datasets.Flowers102("test_data/")
+            self.data = datasets.Flowers102(data_path)
         elif dataset_name.lower()=="cifar10":
-            self.data = datasets.CIFAR10("test_data/")
-            
-        self.images = T.tensor(self.data.data)
-        self.images_torch = self.images.permute(0, 3, 1, 2)
-        self.images_torch = T.clip(self.images_torch / 255.0, 0.0, 1.0)
+            self.data = datasets.CIFAR10(data_path)
+        elif "fashion" in dataset_name.lower():
+            self.data = datasets.FashionMNIST(data_path,
+                                              transform=transforms.Compose([transforms.Resize(32),
+                                                                            transforms.ToTensor()]
+    ))
+
         self.dataloader_args = {"batch_size":64,"shuffle":True}
 
     def get_dataloader(self, dataloader_args={}):
         self.dataloader_args.update(dataloader_args)
-        return T.utils.data.DataLoader(self.images_torch,
+        return T.utils.data.DataLoader(self.data,
                                        **self.dataloader_args
                                        )
 

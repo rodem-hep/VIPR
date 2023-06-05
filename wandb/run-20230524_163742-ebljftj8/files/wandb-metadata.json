@@ -1,0 +1,145 @@
+{
+    "os": "Linux-4.18.0-425.3.1.el8.x86_64-x86_64-with-glibc2.27",
+    "python": "3.9.12",
+    "heartbeatAt": "2023-05-24T14:37:43.964563",
+    "startedAt": "2023-05-24T14:37:42.855711",
+    "docker": null,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "/home/users/a/algren/work/diffusion/diffusion.py",
+    "codePath": "diffusion.py",
+    "git": {
+        "remote": "ssh://gitlab.cern.ch:7999/malgren/diffusion.git",
+        "commit": "fea886639f15d554544536893e728b3b426bb381"
+    },
+    "email": "malte.algren@cern.ch",
+    "root": "/home/users/a/algren/work/diffusion",
+    "host": "gpu005.baobab",
+    "username": "algren",
+    "executable": "/opt/conda/bin/python",
+    "cpu_count": 20,
+    "cpu_count_logical": 20,
+    "cpu_freq": {
+        "current": 2349.2270999999996,
+        "min": 3100.0,
+        "max": 3100.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2934.414,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 3002.945,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2893.462,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2614.026,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 3010.477,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2686.775,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2663.927,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2867.284,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2725.757,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2812.152,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1200.315,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1729.714,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2031.661,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2026.21,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1457.517,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1591.667,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1286.1,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 3023.263,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1648.074,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1200.329,
+            "min": 3100.0,
+            "max": 3100.0
+        }
+    ],
+    "disk": {
+        "total": 0.015625,
+        "used": 1.1444091796875e-05
+    },
+    "gpu": "Tesla P100-PCIE-12GB",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "Tesla P100-PCIE-12GB",
+            "memory_total": 12884901888
+        }
+    ],
+    "memory": {
+        "total": 125.77639389038086
+    }
+}

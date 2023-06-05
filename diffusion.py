@@ -1,11 +1,19 @@
+
+import sys
+import os
+from datetime import datetime
+import copy
+
 import torch as T
 import torch.nn as nn
-import torchvision as TV
+import torchvision 
 import numpy as np
 from torchvision import transforms
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import copy
+import omegaconf
+import wandb
+import hydra
 
 # internal
 from UNet import UNet
@@ -13,29 +21,55 @@ import pipeline as pl
 from tools import misc
 
 class DiffusionModel(nn.Module):
-    def __init__(self, diffusion_config, unet_config,
-                 device="cuda"):
+    def __init__(self, diffusion_config, unet_config,save_path,
+                 mean, std, wandb=None, device="cuda", **kwargs):
         super().__init__()
+        self.wandb=wandb
         self.device=device
         self.diffusion_config=diffusion_config
+        self.save_path=save_path
         self.unet_config=unet_config
-        self.normalizer = transforms.Normalize(mean=0.4734, std=0.2516)
+        self.normalizer = transforms.Normalize(mean=mean, std=std)
         
         self.network = UNet(device=self.device, **unet_config)
-        self.ema_network = copy.deepcopy(self.network)
         self.optimizer = T.optim.AdamW(self.network.parameters(),
                                        lr=diffusion_config.learning_rate)
-        self.loss = nn.MSELoss()
-        self.noise_loss_tracker = []
-        self.image_loss_tracker = []
+        self.ema_network = copy.deepcopy(self.network)
 
-    @property
-    def metrics(self):
-        return [self.noise_loss_tracker, self.image_loss_tracker]
+        self.log_columns=["epoch", "denoise_images","noise_loss", "image_loss"]
+        self.log={i:[] for i in self.log_columns}
+
+        self.loss = nn.MSELoss()
+        
+        # eval with same noise
+        self.initial_noise = T.randn(
+            tuple(kwargs.get("num_images", [9])+self.unet_config.input_shape),
+            device=self.device
+            )
+        
+        
+        # save best
+        self.noise_loss_best=999
+
+        # save configs
+        os.makedirs(save_path, exist_ok=True)
+        for i in ["figures", "states"]:
+            os.makedirs(f"{save_path}/{i}", exist_ok=True)
+
+        misc.save_yaml(diffusion_config, f"{save_path}/diffusion_cfg.yaml")
+        misc.save_yaml(unet_config, f"{save_path}/unet_cfg.yaml")
+        
+    def save(self, path, additional_info={}):
+        states_to_save = {
+            'model': self.ema_network.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            }
+        states_to_save.update(additional_info)
+        T.save(states_to_save, path)
 
     def denormalize(self, images):
         # convert the pixel values back to 0-1 range
-        images = self.normalizer.mean + images * self.normalizer.std**0.5
+        images = self.normalizer.mean + images * self.normalizer.std
         return T.clip(images, 0.0, 1.0)
 
     def diffusion_schedule(self, diffusion_times):
@@ -60,12 +94,12 @@ class DiffusionModel(nn.Module):
             network = self.network
         else:
             network = self.ema_network
+            network.eval()
 
         # predict noise component and calculate the image component using it
-        pred_noises = network(noisy_images,noise_rates**2,
-        # pred_noises = network([noisy_images, noise_rates**2],
-                            #   training=training
-                              )
+        pred_noises = network(noisy_images,noise_rates**2)
+        
+        # remove noise from image
         pred_images = (noisy_images - noise_rates * pred_noises) / signal_rates
 
         return pred_noises, pred_images
@@ -80,7 +114,7 @@ class DiffusionModel(nn.Module):
         # but its signal rate is assumed to be nonzero (min_signal_rate)
         next_noisy_images = initial_noise
         for step in range(diffusion_steps):
-            noisy_images = next_noisy_images
+            noisy_images = next_noisy_images.detach()
 
             # separate the current noisy image to its components
             diffusion_times = T.ones((num_images, 1, 1, 1), device=self.device) - step * step_size
@@ -102,22 +136,24 @@ class DiffusionModel(nn.Module):
 
         return pred_images
 
-    def generate(self, num_images, diffusion_steps):
+    def generate(self, diffusion_steps, num_images=None):
         # noise -> images -> denormalized images
-        initial_noise = T.randn(tuple([num_images]+self.unet_config.input_shape),
+        if num_images is None:
+            initial_noise = self.initial_noise
+        else:
+            initial_noise = T.randn(tuple([num_images]+self.unet_config.input_shape),
                                 device=self.device)
         generated_images = self.reverse_diffusion(initial_noise, diffusion_steps)
         generated_images = self.denormalize(generated_images)
-        # self.generated_images.permute(0, 3, 1, 2)
         return generated_images.permute(0, 2, 3, 1)
-        return generated_images.reshape(num_images, self.unet_config["input_shape"][1],
-                                        self.unet_config["input_shape"][2],
-                                        self.unet_config["input_shape"][0])
+
 
     def train_step(self, images):
         # normalize images to have standard deviation of 1, like the noises
+        log={"image_loss": None, "noise_loss":None}
+        self.optimizer.zero_grad(set_to_none=True)
         images = self.normalizer(images)
-        noises = T.rand_like(images)
+        noises = T.randn_like(images)
 
         # sample uniform random diffusion times
         diffusion_times = T.rand(
@@ -127,115 +163,122 @@ class DiffusionModel(nn.Module):
         noise_rates, signal_rates = self.diffusion_schedule(diffusion_times)
         # mix the images with noises accordingly
         noisy_images = signal_rates * images + noise_rates * noises
-
         pred_noises, pred_images = self.denoise(
             noisy_images, noise_rates, signal_rates, training=True
         )
 
+        pred_images = pred_images.detach()
         noise_loss = self.loss(noises, pred_noises)  # used for training
         image_loss = self.loss(images, pred_images)  # only used as metric
 
         # apply gradients
         noise_loss.backward()
         self.optimizer.step()
-        noise_loss= noise_loss.cpu().detach().numpy()
-        image_loss= image_loss.cpu().detach().numpy()
-        self.noise_loss_tracker.append(noise_loss)
-        self.image_loss_tracker.append(image_loss)
+
+        log["noise_loss"] = noise_loss.cpu().detach().numpy()
+        log["image_loss"] = image_loss.cpu().detach().numpy()
 
         # track the exponential moving averages of weights
-        # print()
-        # print(list(self.network.down_blocks.parameters())[0].sum())
-        # print(list(self.ema_network.down_blocks.parameters())[0].sum())
-        self.ema_network.exponential_moving_averages(self.network.state_dict(),
-                                                     self.diffusion_config.ema)
-        # print(list(self.network.down_blocks.parameters())[0].sum())
-        # print(list(self.ema_network.down_blocks.parameters())[0].sum())
+        with T.no_grad():
+            self.ema_network.exponential_moving_averages(self.network.state_dict(),
+                                                        self.diffusion_config.ema)
 
-        return noise_loss #{m.name: m.result() for m in self.metrics[:-1]}
+        # T.cuda.empty_cache()
+        return log
+    
+    def wandb_log(self):
+        self.wandb.log(self.log)
+        self.log={i:[] for i in self.log_columns}
+    
+    def run_evaluate(self, epoch_nr, images=None):
+        generated_images, fig = self.plot_images(test_images=images, plot_diffusion_steps=20, epoch=epoch_nr)
+        if self.wandb is not None:
+            self.log["denoise_images"] = fig 
+            plt.close(fig)
+    
+    def run_training(self, train_dataloader, n_epochs, run_eval=True):
+        pbar = tqdm(range(n_epochs))
+        for ep in pbar:
+            log = {i:[] for i in self.log_columns}
+            for i, _ in train_dataloader:
+                log_ep = self.train_step(i.to(self.device))
+                
+                for key, items in log_ep.items():
+                    log[key].append(items)
+                    
+            # input logging
+            for key, items in log_ep.items():
+                self.log[key] = np.mean(items)
+                
+            if self.log["noise_loss"]<self.noise_loss_best:
+                self.save(f"{self.save_path}/states/diffusion_{ep}.pth")
 
-    def test_step(self, images):
-        # normalize images to have standard deviation of 1, like the noises
-        images = self.normalizer(images)
-        noises = tf.random.normal(shape=(batch_size, image_size, image_size, 3))
+            self.log["epoch"] = ep
+            
+            if run_eval:
+                # run evaluation
+                self.run_evaluate(ep)
 
-        # sample uniform random diffusion times
-        diffusion_times = tf.random.uniform(
-            shape=(batch_size, 1, 1, 1), minval=0.0, maxval=1.0
-        )
-        noise_rates, signal_rates = self.diffusion_schedule(diffusion_times)
-        # mix the images with noises accordingly
-        noisy_images = signal_rates * images + noise_rates * noises
+            if self.wandb is not None:
+                self.wandb_log()
 
-        # use the network to separate noisy images to their components
-        pred_noises, pred_images = self.denoise(
-            noisy_images, noise_rates, signal_rates, training=False
-        )
-
-        noise_loss = self.loss(noises, pred_noises)
-        image_loss = self.loss(images, pred_images)
-
-        self.image_loss_tracker.update_state(image_loss)
-        self.noise_loss_tracker.update_state(noise_loss)
-
-        # measure KID between real and generated images
-        # this is computationally demanding, kid_diffusion_steps has to be small
-        images = self.denormalize(images)
-        generated_images = self.generate(
-            num_images=batch_size, diffusion_steps=kid_diffusion_steps
-        )
-        self.kid.update_state(images, generated_images)
-
-        return {m.name: m.result() for m in self.metrics}
-
-    def plot_images(self, plot_diffusion_steps=20, epoch=None,
-                    logs=None, num_rows=3, num_cols=6):
+    def plot_images(self, test_images=None, plot_diffusion_steps=20, epoch=None,
+                    logs=None, num_rows=3, num_cols=3):
         # plot random generated images for visual evaluation of generation quality
-        generated_images = self.generate(
-            num_images=num_rows * num_cols,
-            diffusion_steps=plot_diffusion_steps,
-        )
-        generated_images = generated_images.cpu().detach().numpy()
-        plt.figure(figsize=(num_cols * 2.0, num_rows * 2.0))
+        if test_images is None:
+            test_images = self.generate(
+                # num_images=num_rows * num_cols,
+                diffusion_steps=plot_diffusion_steps,
+            )
+            test_images = test_images.cpu().detach().numpy()
+        else:
+            test_images= test_images.permute(0, 2, 3, 1)
+        fig = plt.figure(figsize=(num_cols * 2.0, num_rows * 2.0))
         for row in range(num_rows):
             for col in range(num_cols):
                 index = row * num_cols + col
+                style = {"vmax":1, "vmin":0}
+                if test_images[index].shape[-1]:
+                    style["cmap"] = "gray"
+                    
                 plt.subplot(num_rows, num_cols, index + 1)
-                plt.imshow(generated_images[index], vmax=1, vmin=0)
+                plt.imshow(test_images[index], **style)
                 plt.axis("off")
         plt.tight_layout()
         plt.title(epoch)
-        plt.show()
-        plt.close()
-        return generated_images
+        return test_images, fig
 
-if __name__ == "__main__":
-    config = misc.load_yaml("configs/configs.yaml")
-    # load dataset
-    # train_dataset = pl.prepare_dataset(config.dataset_name,
-    #                                 config.dataset_repetitions,
-    #                                 config.batch_size,
-    #                                 "train[:80%]+validation[:80%]+test[:80%]")
-    # val_dataset = pl.prepare_dataset(config.dataset_name,
-    #                                 config.dataset_repetitions,
-    #                                 config.batch_size,
-    #                                 "train[80%:]+validation[80%:]+test[80%:]")
-    train_sample = pl.ImagePipeline(config.dataset_name)
-
+@hydra.main(version_base=None, config_path="configs/", config_name="config")
+def main(config):
+    data = hydra.utils.instantiate(config.train_set)
+    wandb.config = omegaconf.OmegaConf.to_container(
+        config, resolve=True, throw_on_missing=True
+    )
+    wandb.init(config=config,**config.wandb)
+    
+    dataloader = hydra.utils.instantiate(config.loader_cfg)(data)
+    
+    data=[]
+    for nr, i in tqdm(enumerate(dataloader)):
+        data.append(i[0])
+        if nr==10:
+            break
+    data=T.concat(data)
+    
     # run diffusion
     model = DiffusionModel(diffusion_config=config.diffusion_config,
                            unet_config=config.unet_config,
-                           device=config.device)
-    dataloader = train_sample.get_dataloader()
-    loss=[]
-    for ep in range(config.num_epochs):
-        for i in tqdm(dataloader):
-            images = T.tensor(i.numpy(), device=config.device)
-            loss.append(model.train_step(images))
-            # break
-        generated_images = model.plot_images(epoch=ep)
-        if np.any(np.isnan(generated_images)):
-            break
+                           device=config.device,
+                           mean=data.mean(),
+                           std=data.std(),
+                           save_path=config.save_path,
+                           wandb=wandb
+                           )
+    print(f"Trainable parameters: {model.network.count_trainable_parameters()}")
+    wandb.config.update({"Model Parameters": model.network.count_trainable_parameters()})
     
-    plt.figure()
-    plt.plot(loss)
+    model.run_training(dataloader, config.num_epochs)
+
+        
+if __name__ == "__main__":
+    main()

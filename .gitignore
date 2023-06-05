@@ -21,5 +21,6 @@ python_install/
 # ignoring preprocessing integration test folders
 jobs/
 install_*/
-test_data/
+test_data/*
+wandb/
 *_batch/

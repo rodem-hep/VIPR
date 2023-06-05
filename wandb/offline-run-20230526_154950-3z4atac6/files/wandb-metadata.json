@@ -1,0 +1,145 @@
+{
+    "os": "Linux-4.18.0-425.3.1.el8.x86_64-x86_64-with-glibc2.27",
+    "python": "3.9.12",
+    "heartbeatAt": "2023-05-26T13:49:51.260525",
+    "startedAt": "2023-05-26T13:49:50.436395",
+    "docker": null,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "/home/users/a/algren/work/diffusion/diffusion.py",
+    "codePath": "diffusion.py",
+    "git": {
+        "remote": "ssh://gitlab.cern.ch:7999/malgren/diffusion.git",
+        "commit": "fea886639f15d554544536893e728b3b426bb381"
+    },
+    "email": "malte.algren@cern.ch",
+    "root": "/home/users/a/algren/work/diffusion",
+    "host": "gpu008.baobab",
+    "username": "algren",
+    "executable": "/opt/conda/bin/python",
+    "cpu_count": 20,
+    "cpu_count_logical": 20,
+    "cpu_freq": {
+        "current": 2183.63205,
+        "min": 3100.0,
+        "max": 3100.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2407.167,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2405.745,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2404.083,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2400.004,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2407.319,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2399.897,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2404.241,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2404.08,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2400.554,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2405.367,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2064.662,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1200.279,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1199.997,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1957.033,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1531.14,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2807.194,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1200.104,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 2383.112,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1200.125,
+            "min": 3100.0,
+            "max": 3100.0
+        },
+        {
+            "current": 1200.496,
+            "min": 3100.0,
+            "max": 3100.0
+        }
+    ],
+    "disk": {
+        "total": 0.015625,
+        "used": 1.1444091796875e-05
+    },
+    "gpu": "NVIDIA TITAN Xp",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA TITAN Xp",
+            "memory_total": 12884901888
+        }
+    ],
+    "memory": {
+        "total": 251.77827835083008
+    }
+}

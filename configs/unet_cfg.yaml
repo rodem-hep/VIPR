@@ -1,0 +1,37 @@
+#UNet
+unet_config:
+  embedding_dims : 32
+  ctxt_dims: 0
+  embedding_max_frequency : 1000.0
+  input_shape: [3, 64, 64]
+  channels : [64, 128, 128, 128, 128]
+  # channels : [8, 16, 32, 64, 128]
+  block_depth : 2
+  min_size: 4
+  dropout: 0.1
+  use_gate: true
+
+  # sub-modules
+  #FiLM
+  film_config:
+    n_neurons: 64
+    n_layers: 8
+    activation_str:  leaky_relu
+    batchnorm: true
+    device: ${device}
+
+  # self attention between images
+  self_attention_cfg:
+    attn_below: 8
+    device: ${device}
+    attn_heads: 16
+    pos_encode_kwargs:
+      embedding_max_frequency : ${unet_config.embedding_max_frequency}
+
+  # cross attention as gates to residual connection
+  cross_attention_cfg:
+    attn_below: 16
+    device: ${device}
+    attn_heads: 16
+    pos_encode_kwargs:
+      embedding_max_frequency : ${unet_config.embedding_max_frequency}
