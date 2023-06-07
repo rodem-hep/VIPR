@@ -25,4 +25,5 @@ seaborn
 xarray
 xhistogram
 omegaconf
-hydra
+hydra-core
+wandb
