@@ -1,0 +1,44 @@
+_target_: pipeline.ImageModule
+_convert_: object
+
+train_set:
+  _target_: torchvision.datasets.ImageFolder
+  _partial_: True
+  root: /srv/beegfs/scratch/groups/rodem/datasets/afhq_v2/train/
+  transform:
+    _target_: torchvision.transforms.Compose
+    transforms:
+      - _target_: torchvision.transforms.RandomHorizontalFlip
+      - _target_: torchvision.transforms.RandomResizedCrop
+        size: 64
+        scale: [0.6,1]
+        ratio: [0.95, 1.05]
+      - _target_: torchvision.transforms.ToTensor
+
+test_set:
+  _target_: torchvision.datasets.ImageFolder
+  _partial_: True
+  root: /srv/beegfs/scratch/groups/rodem/datasets/afhq_v2/test/
+  transform: ${..train_set.transform}
+
+loader_config:
+  pin_memory: true
+  batch_size: 32
+  num_workers: 4
+  drop_last: True
+  shuffle: True
+
+img_enc:
+  _target_: pipeline.ImageEnhancement
+  _partial_: True
+  img_enhancement: 
+    - _target_: torchvision.transforms.Resize
+      size: 16
+      interpolation:
+        _target_: torchvision.transforms.InterpolationMode
+        value: bilinear
+    - _target_: torchvision.transforms.Resize
+      size: 64
+      interpolation:
+        _target_: torchvision.transforms.InterpolationMode
+        value: bilinear

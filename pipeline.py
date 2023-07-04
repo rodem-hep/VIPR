@@ -1,82 +1,83 @@
-# import math
-import matplotlib.pyplot as plt
-# import tensorflow as tf
-# import tensorflow_datasets as tfds
-from torchvision import datasets,transforms
+import sys
+from copy import deepcopy
+from functools import partial
+from typing import Mapping
+
 import torch as T
+from torch.utils.data import Dataset,DataLoader
 from tools import misc
+import hydra
 
-# from tensorflow import keras
-# from keras import layers
+class ImageEnhancement(Dataset):
+    def __init__(self, dataloader, img_enhancement=None):
+        self.dataloader=dataloader
+        self.img_enhancement=img_enhancement
 
-# def preprocess_image(data, image_size=64):
-#     # center crop image
-#     height = tf.shape(data["image"])[0]
-#     width = tf.shape(data["image"])[1]
-#     crop_size = tf.minimum(height, width)
-#     image = tf.image.crop_to_bounding_box(
-#         data["image"],
-#         (height - crop_size) // 2,
-#         (width - crop_size) // 2,
-#         crop_size,
-#         crop_size,
-#     )
+    def __iter__(self):
+        for i, _ in self.dataloader:
+            if self.img_enhancement is not None:
+                cvx = i.clone()
+                for trans in self.img_enhancement:
+                    cvx = trans(cvx)
+                yield i, cvx
+            else:
+                yield i, None
 
-#     # resize and clip
-#     # for image downsampling it is important to turn on antialiasing
-#     image = tf.image.resize(image, size=[image_size, image_size], antialias=True)
-#     return tf.clip_by_value(image / 255.0, 0.0, 1.0)
+class ImageModule():
+    def __init__(self, *,
+                 train_set: partial, test_set: partial,
+                 loader_config: Mapping, img_enc:partial=None
+                 ):
+        self.img_enc=img_enc
+        self.loader_config = loader_config
+        self.train_sample=train_set()
+        self.test_sample=test_set()
 
+        if img_enc is not None:
+            self._img_enc = self.img_enc
 
-# def prepare_dataset(dataset_name, dataset_repetitions, batch_size, split):
-#     # the validation dataset is shuffled as well, because data order matters
-#     # for the KID estimation
-#     return (
-#         tfds.load(dataset_name, split=split, shuffle_files=True)
-#         .map(preprocess_image, num_parallel_calls=tf.data.AUTOTUNE)
-#         .cache()
-#         .repeat(dataset_repetitions)
-#         .shuffle(10 * batch_size)
-#         .batch(batch_size, drop_remainder=True)
-#         .prefetch(buffer_size=tf.data.AUTOTUNE)
-#     )
-class ImagePipeline:
-    def __init__(self, dataset_name):
-        data_path = "/home/users/a/algren/work/diffusion/test_data/"
-        if dataset_name.lower()=="oxford_flowers102":
-            self.data = datasets.Flowers102(data_path)
-        elif dataset_name.lower()=="cifar10":
-            self.data = datasets.CIFAR10(data_path)
-        elif "fashion" in dataset_name.lower():
-            self.data = datasets.FashionMNIST(data_path,
-                                              transform=transforms.Compose([transforms.Resize(32),
-                                                                            transforms.ToTensor()]
-    ))
+    def _img_enc(self, *args):
+        return args
 
-        self.dataloader_args = {"batch_size":64,"shuffle":True}
+    def train_dataloader(self) -> DataLoader:
+        return self._img_enc(DataLoader(self.train_sample,
+                                       **self.loader_config))
 
-    def get_dataloader(self, dataloader_args={}):
-        self.dataloader_args.update(dataloader_args)
-        return T.utils.data.DataLoader(self.data,
-                                       **self.dataloader_args
-                                       )
+    def test_dataloader(self, run_img_enc=False) -> DataLoader:
+        test_config = deepcopy(self.loader_config)
+        test_config["drop_last"] = False
+        test_config["shuffle"] = False
+        if run_img_enc:
+            return self._img_enc(DataLoader(self.test_sample,
+                                        **test_config))
+        else:
+            return DataLoader(self.test_sample, **test_config)
+        
 
 if __name__ == "__main__":
-    config = misc.load_yaml("configs/configs.yaml")
-    # load dataset
-    # train_dataset = prepare_dataset(config.dataset_name,
-    #                                 config.dataset_repetitions,
-    #                                 config.batch_size,
-    #                                 "train[:80%]+validation[:80%]+test[:80%]")
-    # val_dataset = prepare_dataset(config.dataset_name,
-    #                                 config.dataset_repetitions,
-    #                                 config.batch_size,
-    #                                 "train[80%:]+validation[80%:]+test[80%:]")
-    images = ImagePipeline()
+    # %matplotlib widget
     import matplotlib.pyplot as plt
-    for i in range(10):
-        plt.figure()
-        plt.imshow(images[i].detach().numpy())
-        plt.tight_layout()
-        plt.show()
-        plt.close()
+    config = misc.load_yaml("configs/data_cfg.yaml")
+    data = hydra.utils.instantiate(config.train_set)
+    dataloader = hydra.utils.instantiate(config.loader_cfg)(data)
+    image_loader = hydra.utils.instantiate(config.img_enc)(dataloader)
+    # downscale_func = T.nn.AvgPool2d(2)
+    # image_loader = ImageEnhancement(dataloader, downscale_func)
+    
+    for i, cvx in image_loader:
+        # print(i)
+        break
+    cvx= cvx.permute(0, 2, 3, 1)
+    i= i.permute(0, 2, 3, 1)
+
+
+    style = {"vmax":1, "vmin":0}
+    figsize=(4*8, 6)
+    _, ax = plt.subplots(1,4, figsize=figsize)
+    for a, img in zip(ax, cvx):
+        a.imshow(img, **style)
+
+    _, ax = plt.subplots(1,4, figsize=figsize)
+    for a, img in zip(ax, i):
+        a.imshow(img, **style)
+        

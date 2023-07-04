@@ -10,13 +10,15 @@ from omegaconf import OmegaConf
 from tools import misc
 from tools.discriminator import DenseNet
 import positional_encoding as pe
-from transformer import (MultiHeadSelfAttention, MultiHeadGateAttention)
+from transformer import (MultiHeadSelfAttention, MultiHeadGateAttention,
+                         VisionTransformerLayer)
+
 from modules import FiLM, Gate, ResidualBlock
 
 class UNet(nn.Module):
     def __init__(self, input_shape, channels, block_depth, min_size,
                  diffusion:bool=False, embedding_max_frequency=None, embedding_dims=0,
-                 ctxt_dims=0, use_gate=True, dropout=0, film_config=None, self_attention_cfg=None,
+                 ctxt_dims=0, use_gate=True, img_enc=1, dropout=0, film_config=None, self_attention_cfg=None,
                  cross_attention_cfg=None, device="cuda"):
         super().__init__()
         self.input_shape = input_shape
@@ -24,6 +26,7 @@ class UNet(nn.Module):
         self.embedding_max_frequency=embedding_max_frequency
         self.embedding_dims=embedding_dims
         self.channels=channels
+        self.img_enc=img_enc
         self.device=device
         self.block_depth=block_depth
         self.diffusion=diffusion
@@ -66,9 +69,10 @@ class UNet(nn.Module):
         self.cross_attention = nn.ModuleList([])
         
         # positional embedding
-        self.embedding = pe.sinusoidal(self.embedding_max_frequency,
-                                       self.embedding_dims,
-                                       device = self.device)
+        # self.embedding = pe.sinusoidal(self.embedding_max_frequency,
+        #                                self.embedding_dims,
+        #                                device = self.device)
+        self.embedding = pe.FourierFeatures(1, self.embedding_dims)
 
         # Upscale/pooling
         self.noise_upscale = nn.Upsample(size=self.input_shape[1:], mode="nearest")
@@ -76,14 +80,20 @@ class UNet(nn.Module):
         self.downscale_embedding = nn.AvgPool2d(2)
 
         ## downscale network
-        start_channels = self.input_shape[0]
+        start_channels = self.input_shape[0]*self.img_enc
         if not self._use_film:
             start_channels +=self.embedding_dims
         # init conv
-        self.start_conv = nn.Conv2d(
-            start_channels,
-            self.channels[0],
-            kernel_size=1)
+        self.start_conv = nn.Sequential(
+                                        nn.Conv2d(start_channels,
+                                                  self.channels[0],
+                                                  kernel_size=1)
+                                        )
+        self.end_conv = nn.Sequential(
+            nn.Conv2d(self.input_shape[0],self.input_shape[0],kernel_size=1)
+            )
+        self.end_conv[-1].weight.data.fill_(0.00)
+        self.end_conv[-1].bias.data.fill_(0.00)
         
         ## FiLM context
         if self._use_film:
@@ -93,10 +103,13 @@ class UNet(nn.Module):
             self.film = iter([None for i in range(1000)])
 
         ## downscale network
-        for input_ch, output_ch in zip(self.channels[:-1], self.channels[1:]):
+        for input_ch, output_ch, img_dim in zip(self.channels[:-1], self.channels[1:],
+                                                self.img_dims):
             self.down_blocks.append(ResidualBlock(input_ch, output_ch,
                                                   self.block_depth,
-                                                  dropout=self.dropout))
+                                                  dropout=self.dropout,
+                                                #   img_dim=img_dim if img_dim>=16 else None
+                                                  ))
 
         ## Upscale network
         for input_ch, output_ch, in_img_dim, out_img_dim in zip(
@@ -122,20 +135,33 @@ class UNet(nn.Module):
                     self.cross_attention.append(None)
 
             self.up_blocks.append(ResidualBlock(input_ch+output_ch, output_ch,
-                                                self.block_depth))
+                                                self.block_depth,
+                                                img_dim=out_img_dim if out_img_dim>=16 else None))
         self.up_blocks.append(ResidualBlock(self.channels[1], self.input_shape[0],
-                                            self.block_depth))
+                                            self.block_depth,
+                                            img_dim=self.img_dims[0] if self.img_dims[0]>=16 else None))
         
         #self attention at low resolution
-        self.self_attention = nn.ModuleList([])
+        self.down_self_attention = nn.ModuleList([])
         for img_dim, n_channels in zip(self.img_dims,np.array(self.channels)[1:]):
             if img_dim <= self.self_attention_cfg.attn_below:
-                self.self_attention.append(
+                self.down_self_attention.append(
                     MultiHeadSelfAttention(n_channels,
                                            image_shape= [n_channels, img_dim, img_dim], 
                                             **self.self_attention_cfg))
             else:
-                self.self_attention.append(None)
+                self.down_self_attention.append(None)
+
+        #self attention at low resolution
+        self.up_self_attention = nn.ModuleList([])
+        for img_dim, n_channels in zip(self.img_dims[::-1],np.array(self.channels)[1:][::-1]):
+            if img_dim <= self.self_attention_cfg.attn_below:
+                self.up_self_attention.append(
+                    MultiHeadSelfAttention(n_channels,
+                                           image_shape= [n_channels, img_dim, img_dim], 
+                                            **self.self_attention_cfg))
+            else:
+                self.up_self_attention.append(None)
 
     def forward(self, noisy_images, noise_variances=None, ctxt=None):
 
@@ -146,13 +172,19 @@ class UNet(nn.Module):
             x = T.concat([x, e],1)
         elif self._use_film:
             e = self.embedding(noise_variances)
-            self.film(e[:,:,0,0])
+            self.film(e[:,0,0,:])
+            # self.film(e[:,:,0,0])
+        
+        if ctxt is not None:
+            noisy_images = T.concat([noisy_images, ctxt],1)
+            
+            
 
         x = self.start_conv(noisy_images)
 
         # downscale part
         skips = []
-        for down_blk, attention in zip(self.down_blocks[:-1], self.self_attention):
+        for down_blk, attention in zip(self.down_blocks[:-1], self.down_self_attention):
             x = down_blk(x, next(self.film))
             if attention is not None:
                 x = attention(x)
@@ -163,14 +195,15 @@ class UNet(nn.Module):
         x = self.down_blocks[-1](x, next(self.film))
 
         if self.self_attention_cfg is not None:
-            x = self.self_attention[-1](x)
+            x = self.down_self_attention[-1](x)
 
         #upscale part
-        for up_blk, cross_attention in zip(self.up_blocks, self.cross_attention):
+        for up_blk, cross_attention, attention in zip(self.up_blocks, self.cross_attention,
+                                           self.up_self_attention):
             skip = skips.pop()
 
-            # if attention is not None:
-            #     x = attention(x)
+            if attention is not None:
+                x = attention(x)
 
             x = self.upscale_embedding(x)
 
@@ -180,7 +213,9 @@ class UNet(nn.Module):
             x = T.concat([x, skip],1)
             x = up_blk(x, next(self.film))
 
-        x = self.up_blocks[-1](x) # next(self.film)
+        x = self.up_blocks[-1](x) 
+
+        x = self.end_conv(x)
 
         return x
 

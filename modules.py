@@ -5,6 +5,7 @@ import torch.nn as nn
 import torchvision as TV
 import numpy as np
 from omegaconf import OmegaConf
+from transformer import VisionTransformerLayer
 
 # internal 
 from tools import misc
@@ -85,44 +86,40 @@ class Gate(nn.Module):
 
 class ResidualBlock(nn.Module):
     def __init__(self, input_size, output_size, block_depth, dropout=0.1,
-                 zero_init=True) -> None:
+                 img_dim=None, zero_init=True) -> None:
         super().__init__()
         self.input_size = input_size
         self.output_size=output_size
         self.block_depth = block_depth
         self.zero_init=zero_init
         self.dropout=dropout
+        self.img_dim=img_dim
         self.get_network()
         
     def get_layer(self, input_size, output_size):
         return nn.Sequential(
-                    nn.BatchNorm2d(input_size, output_size, affine=False),
-                    nn.SiLU(),
+                    nn.BatchNorm2d(input_size, output_size, affine=False), 
+                    nn.GELU(),
                     nn.Dropout(p=self.dropout),
                     nn.Conv2d(input_size, output_size, kernel_size=3, padding="same"))
 
     def get_network(self):
         self.skip_connection = nn.Conv2d(self.input_size, self.output_size, kernel_size=1)
-        
-        # self.norm = nn.ModuleList([
-        #     nn.BatchNorm2d(self.input_size, self.output_size, affine=False)])
-        # self.convs = nn.ModuleList([nn.Conv2d(self.input_size, self.output_size,
-        #                                       kernel_size=3, padding="same")])
-        # for _ in range(self.block_depth-1):
-        #     self.norm.append(nn.BatchNorm2d(self.output_size, self.output_size, affine=False))
-        #     self.convs.append(nn.Conv2d(self.output_size, self.output_size,
-        #                                 kernel_size=3, padding="same"))
-        # self.convs[-1].weight.data.fill_(0.01)
-        # self.convs[-1].bias.data.fill_(0.01)
-        # self.act_func = nn.SiLU()
-        
+                
         self.layers = nn.ModuleList([self.get_layer(self.input_size, 
                                                     self.output_size)])
         for _ in range(self.block_depth-1):
             self.layers.append(self.get_layer(self.output_size, self.output_size))
 
-        self.layers[-1][-1].weight.data.fill_(0.00)
-        self.layers[-1][-1].bias.data.fill_(0.00)
+        if self.img_dim is not None:
+            self.layers.append(VisionTransformerLayer(
+                img_shape=self.img_dim,
+                n_channels=self.output_size, n_patches=8,
+                attn_heads=8
+            ))
+        else:
+            self.layers[-1][-1].weight.data.fill_(0.00)
+            self.layers[-1][-1].bias.data.fill_(0.00)
             
     def forward(self,x, ctxt=None):
         residual_connection = self.skip_connection(x)

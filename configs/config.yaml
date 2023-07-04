@@ -1,3 +1,4 @@
+# @package _global_
 hydra:
   run:
     dir: ${save_path}
@@ -11,7 +12,7 @@ defaults:
   - _self_
   - diffusion_cfg
   - unet_cfg
-  - data_cfg
+  - data_cfgs: animals.yaml
   - train_cfg
 
 wandb:
