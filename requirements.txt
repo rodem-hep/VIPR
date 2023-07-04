@@ -1,28 +1,36 @@
-awkward
+# deep learning
+torchvision
+torchmetrics
+pytorch-lightning
+
+# data science / plotting
+numpy
+matplotlib
+scipy
+seaborn
+scikit-learn
+pandas
+numba
+
+# wandb/hydra
+omegaconf
+hydra-core
+wandb
+
+# tests
 black
 coverage
 darglint
 flake8
-h5py
 isort
-jupyter
-matplotlib
-numpy
-numba
-pandas
 pylint
 pytest-cov
 pytest
-scikit-learn
-tqdm
-uproot
-torchvision
+
+# misc
+h5py
 jupyter
+tqdm
 jupyterlab
 python-gitlab
-scipy
-seaborn
-xarray
-xhistogram
-omegaconf
-hydra
+
