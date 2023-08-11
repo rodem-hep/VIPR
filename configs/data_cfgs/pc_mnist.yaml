@@ -1,0 +1,9 @@
+_target_: src.pipeline.PointCloudModule
+_convert_: object
+
+train_path: [/home/users/a/algren/scratch/diffusion/mnist/train.csv,
+            /home/users/a/algren/scratch/diffusion/mnist/test.csv
+            ]
+test_path: [/home/users/a/algren/scratch/diffusion/mnist/test.csv]
+
+data_name: mnist

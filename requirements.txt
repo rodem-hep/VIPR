@@ -16,6 +16,7 @@ numba
 omegaconf
 hydra-core
 wandb
+plotly # required for wandb (i think)
 
 # tests
 black
@@ -33,4 +34,5 @@ jupyter
 tqdm
 jupyterlab
 python-gitlab
+pyrootutils
 

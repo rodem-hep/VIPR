@@ -1,4 +1,23 @@
+import numpy as np
 import torch as T
+import io
+from PIL import Image
+
+def log_squash(data: np.ndarray) -> np.ndarray:
+    """Apply a log squashing function for distributions with high tails."""
+    if isinstance(data, T.Tensor):
+        return T.sign(data) * T.log(T.abs(data) + 1)
+    else:
+        return np.sign(data) * np.log(np.abs(data) + 1)
+
+
+def undo_log_squash(data: np.ndarray) -> np.ndarray:
+    """Undo the log squash function above."""
+    if isinstance(data, T.Tensor):
+        return T.sign(data) * (T.exp(T.abs(data)) - 1)
+    else:
+        return np.sign(data) * (np.exp(np.abs(data)) - 1)
+
 
 def append_dims(x: T.Tensor, target_dims: int, add_to_front: bool = False) -> T.Tensor:
     """Appends dimensions of size 1 to the end or front of a tensor until it
@@ -47,3 +66,12 @@ def append_dims(x: T.Tensor, target_dims: int, add_to_front: bool = False) -> T.
     if add_to_front:
         return x[(None,) * dim_diff + (...,)]  # x.view(*dim_diff * (1,), *x.shape)
     return x[(...,) + (None,) * dim_diff]  # x.view(*x.shape, *dim_diff * (1,))
+
+
+def fig2img(fig):
+    """Convert a Matplotlib figure to a PIL Image and return it"""
+    buf = io.BytesIO()
+    fig.savefig(buf)
+    buf.seek(0)
+    img = Image.open(buf)
+    return img

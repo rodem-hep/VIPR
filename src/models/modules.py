@@ -5,21 +5,24 @@ import torch.nn as nn
 import torchvision as TV
 import numpy as np
 from omegaconf import OmegaConf
-from transformer import VisionTransformerLayer
+# from src.models.transformer import VisionTransformerLayer
 
 # internal 
 from tools import misc
 from tools.discriminator import get_densenet
 
 class FiLM(nn.Module):
-    def __init__(self, ctxt_size, lst_channel, dense_config):
+    def __init__(self, ctxt_size, lst_channel, dense_config, use_on_image:bool=True, device="cuda"):
         super().__init__()
         self.ctxt_size = ctxt_size
+        self.device=device
         self.lst_channel=lst_channel
+        self.use_on_image=use_on_image
         network = get_densenet(input_dim=self.ctxt_size,
                                 output_dim=2*(np.sum(lst_channel+lst_channel[:-1])),
                                 **dense_config)
-        self.network = nn.Sequential(*network).to(dense_config.device)
+        self.network = nn.Sequential(*network)
+        self.to(device)
 
     def forward(self,ctxt):
         # thought the network
@@ -34,9 +37,12 @@ class FiLM(nn.Module):
         #dim for upscale network
         dims +=list(dims[-1]+np.cumsum(self.lst_channel[:-1][::-1]))
 
-        
-        self.film_parameters = [film_parameters[:,i:j, :].unsqueeze(3)
-                                for i,j in zip(dims[:-1], dims[1:])]
+        if self.use_on_image:
+            self.film_parameters = [film_parameters[:,i:j, :].unsqueeze(3)
+                                    for i,j in zip(dims[:-1], dims[1:])]
+        else:
+            self.film_parameters = [film_parameters.transpose(-1, -2)[:, :, i:j]
+                                    for i,j in zip(dims[:-1], dims[1:])]
 
         # create iterator
         self._film_parameters_iter = iter(self.film_parameters)
@@ -99,7 +105,7 @@ class ResidualBlock(nn.Module):
     def get_layer(self, input_size, output_size):
         return nn.Sequential(
                     nn.BatchNorm2d(input_size, output_size, affine=False), 
-                    nn.GELU(),
+                    nn.LeakyReLU(),
                     nn.Dropout(p=self.dropout),
                     nn.Conv2d(input_size, output_size, kernel_size=3, padding="same"))
 
@@ -111,15 +117,15 @@ class ResidualBlock(nn.Module):
         for _ in range(self.block_depth-1):
             self.layers.append(self.get_layer(self.output_size, self.output_size))
 
-        if self.img_dim is not None:
-            self.layers.append(VisionTransformerLayer(
-                img_shape=self.img_dim,
-                n_channels=self.output_size, n_patches=8,
-                attn_heads=8
-            ))
-        else:
-            self.layers[-1][-1].weight.data.fill_(0.00)
-            self.layers[-1][-1].bias.data.fill_(0.00)
+        # if self.img_dim is not None:
+        #     self.layers.append(VisionTransformerLayer(
+        #         img_shape=self.img_dim,
+        #         n_channels=self.output_size, n_patches=8,
+        #         attn_heads=8
+        #     ))
+        # else:
+        self.layers[-1][-1].weight.data.fill_(0.00)
+        self.layers[-1][-1].bias.data.fill_(0.00)
             
     def forward(self,x, ctxt=None):
         residual_connection = self.skip_connection(x)

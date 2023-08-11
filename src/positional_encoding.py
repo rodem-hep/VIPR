@@ -9,35 +9,11 @@ from omegaconf import OmegaConf
 # internal 
 from tools import misc
 from tools.discriminator import DenseNet
-
-def sinusoidal_embedding(x, embedding_min_frequency,
-                         embedding_max_frequency,
-                         embedding_dims,
-                         device="cuda"):
-    frequencies = T.exp(
-        T.linspace(
-            np.log(embedding_min_frequency),
-            np.log(embedding_max_frequency),
-            embedding_dims // 2, device=device
-        )
-    )
-    angular_speeds = 2.0 * T.pi * frequencies
-    if len(x.shape)>=3:
-        embeddings = T.concat(
-            [T.sin(angular_speeds * x),
-            T.cos(angular_speeds * x)],
-            axis=3
-        )
-        embeddings = embeddings.reshape(x.shape[0],embedding_dims,1,1)
-    else:
-        embeddings = T.concat(
-            [T.sin(angular_speeds * x),
-            T.cos(angular_speeds * x)], axis=1
-        )
-    return embeddings
+from src.utils import append_dims
 
 class sinusoidal:
-    def __init__(self,embedding_dims, embedding_min_frequency=1, embedding_max_frequency=1000, img_shape=None, device="cuda"):
+    def __init__(self,embedding_dims, embedding_min_frequency=1,
+                 embedding_max_frequency=1000, img_shape=None, device="cuda"):
         self.embedding_min_frequency = embedding_min_frequency
         self.embedding_max_frequency=embedding_max_frequency
         self.embedding_dims=embedding_dims
@@ -45,15 +21,34 @@ class sinusoidal:
         self.img_shape=img_shape
         if img_shape is not None:
             self.create_embedding()
+
+        self.frequencies = T.exp(
+            T.linspace(
+                np.log(self.embedding_min_frequency),
+                np.log(self.embedding_max_frequency),
+                self.embedding_dims // 2, device=self.device
+            )
+        )
+
+    def sinusoidal_embedding(self,x):
+        angular_speeds = 2.0 * T.pi * self.frequencies
+        # if len(x.shape)>=3:
+        #     embeddings = T.concat(
+        #         [T.sin(angular_speeds * x),
+        #         T.cos(angular_speeds * x)],
+        #         axis=3
+        #     )
+        #     embeddings = embeddings.reshape(x.shape[0],self.embedding_dims,1,1)
+        # else:
+        embeddings = T.concat(
+            [T.sin(angular_speeds * x),
+            T.cos(angular_speeds * x)], axis=-1
+        )
+        return embeddings
     
-    def __call__(self, x):
+    def __call__(self, x, n_dims:int):
         "iterative embedding for changing noise"
-        return sinusoidal_embedding(x,
-                                    self.embedding_min_frequency,
-                                    self.embedding_max_frequency,
-                                    self.embedding_dims,
-                                    device=self.device
-                                    )
+        return  append_dims(self.sinusoidal_embedding(x), n_dims)
 
 class PositionalEncoding(nn.Module):
     # from https://pytorch.org/tutorials/beginner/transformer_tutorial.html
@@ -84,9 +79,11 @@ class FourierFeatures(nn.Module):
         assert out_features % 2 == 0
         self.register_buffer('weight', T.randn([out_features // 2, in_features]) * std)
 
-    def forward(self, input):
+    def forward(self, input, n_dims:int):
         angular_speeds = 2 * math.pi * input @ self.weight.T
-        return T.cat([angular_speeds.cos(), angular_speeds.sin()], dim=-1)
+        # angular_speeds = angular_speeds.transpose(-1, -2)
+        return append_dims(T.cat([angular_speeds.cos(), angular_speeds.sin()], dim=-1),
+                           n_dims)
 
 
 if __name__ == "__main__":

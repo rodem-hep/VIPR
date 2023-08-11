@@ -1,5 +1,7 @@
-_target_: pipeline.ImageModule
+_target_: src.pipeline.DataModule
 _convert_: object
+
+run_img_enc_test: true
 
 train_set:
   _target_: torchvision.datasets.ImageFolder
@@ -10,6 +12,7 @@ train_set:
     transforms:
       - _target_: torchvision.transforms.RandomHorizontalFlip
       - _target_: torchvision.transforms.RandomResizedCrop
+        antialias: True
         size: 64
         scale: [0.6,1]
         ratio: [0.95, 1.05]
@@ -23,22 +26,29 @@ test_set:
 
 loader_config:
   pin_memory: true
-  batch_size: 32
+  batch_size: 96
   num_workers: 4
   drop_last: True
   shuffle: True
+  persistent_workers: True
+  pin_memory_device: cuda
+  prefetch_factor: 4
 
 img_enc:
-  _target_: pipeline.ImageEnhancement
+  _target_: src.pipeline.ImageModule
   _partial_: True
   img_enhancement: 
-    - _target_: torchvision.transforms.Resize
-      size: 16
-      interpolation:
-        _target_: torchvision.transforms.InterpolationMode
-        value: bilinear
-    - _target_: torchvision.transforms.Resize
-      size: 64
-      interpolation:
-        _target_: torchvision.transforms.InterpolationMode
-        value: bilinear
+    _target_: torchvision.transforms.Compose
+    transforms:
+      - _target_: torchvision.transforms.Resize
+        antialias: True
+        size: 16
+        interpolation:
+          _target_: torchvision.transforms.InterpolationMode
+          value: bilinear
+      - _target_: torchvision.transforms.Resize
+        antialias: True
+        size: 64
+        interpolation:
+          _target_: torchvision.transforms.InterpolationMode
+          value: bilinear

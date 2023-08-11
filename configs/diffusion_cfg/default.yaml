@@ -1,0 +1,23 @@
+# diffusion
+eval_iters: 10
+n_diffusion_steps: 20
+min_signal_rate : 0.02
+max_signal_rate : 1.00
+
+# optimization
+ema : 0.999
+learning_rate : 1e-3
+weight_decay : 1e-4
+num_epochs: 2000
+
+# diffusion type
+super_res: False
+
+init_noise:
+  datatype: pc #image
+  # n_constituents_min: null
+  # n_constituents_max: null
+  device: ${device}
+  size: 5_000
+
+

@@ -1,0 +1,7 @@
+_target_: src.pipeline.PointCloudModule
+_convert_: object
+
+train_path: [/home/users/a/algren/scratch/diffusion/pileup/ttbar_processed.csv, ]
+test_path: [/home/users/a/algren/scratch/diffusion/pileup/ttbar_processed.csv, ]
+
+data_name: jet

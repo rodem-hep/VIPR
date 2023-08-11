@@ -1,0 +1,41 @@
+_target_: src.models.pc_model.TransformerEncoder
+# _convert_: object
+
+device: ${device}
+
+# input dims
+vkq_dims: 3
+ctxt_dims: null
+
+# network scaling
+embedding_dims: 32
+upscale_dims: 128
+n_encoders: 4
+attn_heads: 16
+sentence_len: null
+
+mlp_cfg:
+  act_str: leakyrelu
+  n_layers: 2
+  norm: layer
+
+pcivr_cfg:
+  input_query_dims: 
+    - ${...sentence_len}
+    - ${...upscale_dims}
+  output_query_dims:  ${.input_query_dims}
+  latent_dims: [16, 64] # n_cons x features
+  n_processes: 1
+  attn_heads: ${..attn_heads}
+
+  film_cfg:
+    ctxt_size: ${...embedding_dims}
+    use_on_image: false
+    dense_config:
+      n_neurons: 512
+      n_layers: 2
+      activation_str: leakyrelu
+      batchnorm: true
+      device: ${device}
+  
+  mlp_cfg: ${..mlp_cfg}

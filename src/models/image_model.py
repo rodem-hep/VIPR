@@ -9,11 +9,11 @@ from omegaconf import OmegaConf
 # internal 
 from tools import misc
 from tools.discriminator import DenseNet
-import positional_encoding as pe
-from transformer import (MultiHeadSelfAttention, MultiHeadGateAttention,
+import src.positional_encoding as pe
+from src.models.transformer import (MultiHeadSelfAttention, MultiHeadGateAttention,
                          VisionTransformerLayer)
 
-from modules import FiLM, Gate, ResidualBlock
+from src.models.modules import FiLM, Gate, ResidualBlock
 
 class UNet(nn.Module):
     def __init__(self, input_shape, channels, block_depth, min_size,
@@ -98,7 +98,7 @@ class UNet(nn.Module):
         ## FiLM context
         if self._use_film:
             self.film = FiLM(self.embedding_dims+self.ctxt_dims, self.channels[1:],
-                             dense_config=self.film_config)
+                             dense_config=self.film_config, device=self.device)
         else: # dummy film
             self.film = iter([None for i in range(1000)])
 
@@ -121,7 +121,7 @@ class UNet(nn.Module):
             #gated cross attention
             # when img too big, use simple gating
             if ((self.cross_attention_cfg is not None)&
-                (out_img_dim <= self.cross_attention_cfg.attn_below)): 
+                (out_img_dim <= self.cross_attention_cfg["attn_below"])): 
                 self.cross_attention.append(
                     MultiHeadGateAttention(input_ch, output_ch,
                                             image_shape_vk= [output_ch, out_img_dim, out_img_dim], 
@@ -144,7 +144,7 @@ class UNet(nn.Module):
         #self attention at low resolution
         self.down_self_attention = nn.ModuleList([])
         for img_dim, n_channels in zip(self.img_dims,np.array(self.channels)[1:]):
-            if img_dim <= self.self_attention_cfg.attn_below:
+            if img_dim <= self.self_attention_cfg["attn_below"]:
                 self.down_self_attention.append(
                     MultiHeadSelfAttention(n_channels,
                                            image_shape= [n_channels, img_dim, img_dim], 
@@ -155,7 +155,7 @@ class UNet(nn.Module):
         #self attention at low resolution
         self.up_self_attention = nn.ModuleList([])
         for img_dim, n_channels in zip(self.img_dims[::-1],np.array(self.channels)[1:][::-1]):
-            if img_dim <= self.self_attention_cfg.attn_below:
+            if img_dim <= self.self_attention_cfg["attn_below"]:
                 self.up_self_attention.append(
                     MultiHeadSelfAttention(n_channels,
                                            image_shape= [n_channels, img_dim, img_dim], 
@@ -163,7 +163,7 @@ class UNet(nn.Module):
             else:
                 self.up_self_attention.append(None)
 
-    def forward(self, noisy_images, noise_variances=None, ctxt=None):
+    def forward(self, noisy_images, noise_variances=None, ctxt=None, mask=None):
 
         # noise positional encoding
         if (noise_variances is not None) and (not self._use_film):
@@ -215,7 +215,7 @@ class UNet(nn.Module):
 
         x = self.up_blocks[-1](x) 
 
-        x = self.end_conv(x)
+        x = self.end_conv(x) # TODO add original input?
 
         return x
 

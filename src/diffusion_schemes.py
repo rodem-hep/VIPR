@@ -3,7 +3,7 @@ import torch as T
 import torch.nn as nn
 import numpy as np
 # internal
-import utils
+import src.utils as utils
 
     
 class Solvers(nn.Module):
@@ -14,15 +14,16 @@ class Solvers(nn.Module):
         else:
             self.solver = self.ddim
 
-    def heun2d(self, initial_noise:T.Tensor, sigma_steps:np.ndarray, ctxt=None)->:
+    def heun2d(self, initial_noise:T.Tensor | tuple, sigma_steps:np.ndarray, ctxt=None,
+               mask:T.Tensor=None)->T.Tensor:
         #heuns 2nd solver
-
         # scale to correct std
         x = initial_noise.detach()*sigma_steps[0]
         for i in range(len(sigma_steps)-1):
 
             # left tangent
-            dx = (x -self.denoise(x, sigma_steps[i],training=False, ctxt=ctxt)
+            dx = (x -self.denoise(x, sigma_steps[i],training=False, ctxt=ctxt,
+                                  mask=mask)
                   )/sigma_steps[i]
             dt = (sigma_steps[i+1]-sigma_steps[i])
             # solve euler
@@ -32,7 +33,8 @@ class Solvers(nn.Module):
                 # right tangent
                 dx_ = 1/sigma_steps[i+1] * (x_1 -self.denoise(x_1, sigma_steps[i+1],
                                                          training=False,
-                                                         ctxt=ctxt))
+                                                         ctxt=ctxt,
+                                                         mask=mask))
 
                 x = (x+dt*(1/2*dx+1/2*dx_)).detach()
             else:
@@ -74,7 +76,6 @@ class Solvers(nn.Module):
 
 class UniformDiffusion(nn.Module):
     "from https://keras.io/examples/generative/ddim/"
-    # def __init__(self):
     
     def uniform_diffusion_time(self, diffusion_times):
         
@@ -93,24 +94,26 @@ class UniformDiffusion(nn.Module):
 
         return noise_rates, signal_rates
 
-    def reverse_diffusion(self, initial_noise, diffusion_steps, ctxt=None):
+    def reverse_diffusion(self, images, ctxt=None, mask=None):
         # reverse diffusion = sampling
-        num_images = initial_noise.shape[0]
-        step_size = 1.0 / diffusion_steps
+        num_images = images.shape[0]
+        step_size = 1.0 / self.n_diffusion_steps
 
         # important line:
         # at the first sampling step, the "noisy image" is pure noise
         # but its signal rate is assumed to be nonzero (min_signal_rate)
-        next_noisy_images = initial_noise
-        for step in range(diffusion_steps):
+        next_noisy_images = images
+        for step in range(self.n_diffusion_steps):
             noisy_images = next_noisy_images.detach()
 
             # separate the current noisy image to its components
-            diffusion_times = T.ones((num_images, 1, 1, 1), device=self.device) - step * step_size
+            diffusion_times = T.ones([num_images]+[1]*(len(images.shape)-1),
+                                     device=self.device) - step * step_size
+
             noise_rates, signal_rates = self.uniform_diffusion_time(diffusion_times)
             pred_noises, pred_images = self.denoise(
                 noisy_images, noise_rates, signal_rates, training=False,
-                ctxt=ctxt
+                ctxt=ctxt, mask=mask
             )
             # network used in eval mode
 
@@ -126,7 +129,8 @@ class UniformDiffusion(nn.Module):
 
         return pred_images
     
-    def denoise(self, noisy_images, noise_rates, signal_rates, training, ctxt=None):
+    def denoise(self, noisy_images, noise_rates, signal_rates, training, ctxt=None,
+                mask=None):
         # the exponential moving average weights are used at evaluation
         if training:
             network = self.network
@@ -134,28 +138,54 @@ class UniformDiffusion(nn.Module):
             network = self.ema_network
             network.eval()
         
-        if ctxt is not None:
-            ctxt = self.normalizer(ctxt)
+        # if (ctxt is not None) & (self.normalizer is not None):
+        #     ctxt = self.normalizer(ctxt)
 
         # predict noise component and calculate the image component using it
-        pred_noises = network(noisy_images,noise_rates**2, ctxt=ctxt)
+        pred_noises = network(noisy_images,noise_rates**2, ctxt=ctxt, mask=mask)
         
         # remove noise from image
         pred_images = (noisy_images - noise_rates * pred_noises) / signal_rates
 
         return pred_noises, pred_images
 
-    def train_step(self, images, ctxt=None):
+    def train_step(self, images, ctxt=None, mask=None):
         # normalize images to have standard deviation of 1, like the noises
-        log={"image_loss": None, "noise_loss":None}
         self.optimizer.zero_grad(set_to_none=True)
-        images = self.normalizer(images)
+        
+        log = self._shared_step(images, ctxt, mask, training=True)
+        
+        # apply gradients
+        log["noise_loss"].backward()
+        self.optimizer.step()
+
+        # track the exponential moving averages of weights
+        with T.no_grad():
+            self.ema_network.exponential_moving_averages(self.network.state_dict(),
+                                                        self.diffusion_config.ema)
+
+        return {i:j.cpu().detach().numpy() for i,j in log.items()}
+        
+        
+    def _shared_step(self, images:T.Tensor, ctxt:T.Tensor=None,
+                     mask:T.Tensor=None, training:bool=True):
+        
+        # the exponential moving average weights are used at evaluation 
+        images= images.to(self.device)
+
+        # normalising images
+        # if self.normalizer is not None:
+        #     images = self.normalizer(images)
+
+            # in denoise
+            # if (ctxt is not None) and (len(ctxt.shape)>2):
+            #     ctxt = self.normalizer(ctxt).to(self.device)
             
         noises = T.randn_like(images)
 
         # sample uniform random diffusion times
         diffusion_times = T.rand(
-            size=(len(images), 1, 1, 1),
+            size=[len(images)]+[1]*(len(images.shape)-1),
             device=self.device
         )
 
@@ -165,31 +195,19 @@ class UniformDiffusion(nn.Module):
         # mix the images with noises accordingly
         noisy_images = signal_rates * images + noise_rates * noises
         pred_noises, pred_images = self.denoise(
-            noisy_images, noise_rates, signal_rates, training=True,
-            ctxt=ctxt
+            noisy_images, noise_rates, signal_rates, training=training,
+            ctxt=ctxt, mask=mask.to(self.device)
         )
-
         pred_images = pred_images.detach()
-        noise_loss = self.loss(noises, pred_noises)  # used for training
-        image_loss = self.loss(images, pred_images)  # only used as metric
 
-        # apply gradients
-        noise_loss.backward()
-        self.optimizer.step()
+        noise_loss = self.loss(noises[mask], pred_noises[mask])  # used for training
+        image_loss = self.loss(images[mask], pred_images[mask])  # only used as metric
+        
+        return {"image_loss": image_loss, "noise_loss":noise_loss}
 
-        log["noise_loss"] = noise_loss.cpu().detach().numpy()
-        log["image_loss"] = image_loss.cpu().detach().numpy()
 
-        # track the exponential moving averages of weights
-        with T.no_grad():
-            self.ema_network.exponential_moving_averages(self.network.state_dict(),
-                                                        self.diffusion_config.ema)
-
-        # T.cuda.empty_cache()
-        return log
-    
 class ElucidatingDiffusion(Solvers):
-    def __init__(self, rho=7, s_min=0.002, s_max=80, s_data=1):
+    def __init__(self, rho=7, s_min=1e-5, s_max=80, s_data=1):
         super().__init__("heun2d")
         self.rho=rho
         self.s_min=s_min
@@ -198,7 +216,6 @@ class ElucidatingDiffusion(Solvers):
         self.P_mean=-1.2
         self.P_std=1.2
         self.inv_rho = (1/self.rho)
-        # self.solvers = Solvers("heun2d")
 
     def sample_sigma(self, i:int, N:int=20, n_imgs:int=1):
         "sample sigma during generation"
@@ -220,17 +237,17 @@ class ElucidatingDiffusion(Solvers):
         
         c_input = 1/norm
         
-        c_noise = 1/4*T.log(sigma)
+        # c_noise = 1/4*T.log(sigma)
         
-        return c_skip, c_out, c_input, c_noise
+        return c_skip, c_out, c_input
 
-    def sample_time(self,size):
+    def sample_time(self,size, target_dims):
         noise = T.randn(size, device=self.device, requires_grad=True)
         noise = T.exp(noise*self.P_std+self.P_mean)
         noise = T.clip(noise, self.s_min, self.s_max)
-        return utils.append_dims(noise, target_dims=4)
+        return utils.append_dims(noise, target_dims=target_dims)
     
-    def denoise(self, images, sigma, training, ctxt=None):
+    def denoise(self, images, sigma, training, ctxt=None, mask=None):
         # the exponential moving average weights are used at evaluation 
         if training:
             network = self.network
@@ -238,40 +255,41 @@ class ElucidatingDiffusion(Solvers):
             network = self.ema_network
             network.eval()
         
-        if ctxt is not None:
-            ctxt = self.normalizer(ctxt)
+        # if (ctxt is not None) & (self.normalizer is not None):
+        #     ctxt = self.normalizer(ctxt)
 
         # preconditions
-        c_skip, c_out, c_input, c_noise = self.precondition(sigma)
-
-        # make c_noise correct size
-        # c_noise_img = T.reshape(c_noise, (len(images), 1, 1, 1))
+        c_skip, c_out, c_input = self.precondition(sigma)
 
         # predict noise component and calculate the image component using it
-        network_output = network(c_input*images,c_noise, ctxt=ctxt)
+        network_output = network(c_input*images,sigma, ctxt=ctxt, mask=mask)
         
         return c_skip*images+c_out*network_output
     
-    def _shared_step(self, images:T.tensor, ctxt:T.tensor=None,
-                     training:bool=True)->T.tensor:
+    def _shared_step(self, images:T.Tensor, ctxt:T.Tensor=None,
+                     mask:T.Tensor=None, training:bool=True
+                     )->T.Tensor:
 
-        # the exponential moving average weights are used at evaluation 
+        # the exponential moving average weights are used at evaluation
         if training:
             network = self.network
         else:
             network = self.ema_network
             network.eval()
 
+        # images = images.to(self.device)
+        
         # normalising images
-        images = self.normalizer(images)
-        if ctxt is not None:
-            ctxt = self.normalizer(ctxt)
+        # if self.normalizer is not None:
+        #     images = self.normalizer(images)
+        #     if (ctxt is not None) and (len(ctxt.shape)>2):
+        #         ctxt = self.normalizer(ctxt).to(self.device)
 
         # sample noise distribution
-        sigma_noise = self.sample_time(len(images))
+        sigma_noise = self.sample_time(len(images), len(images.shape))
 
-        # calculate preconditions
-        c_skip, c_out, c_input, c_noise = self.precondition(sigma_noise)
+        # calculate preconditions 
+        c_skip, c_out, c_input = self.precondition(sigma_noise)
 
         #generate noise
         noises = T.randn_like(images) * sigma_noise
@@ -280,45 +298,44 @@ class ElucidatingDiffusion(Solvers):
         noisy_images = images + noises
 
         # predict noise component and calculate the image component using it
-        pred_images = network(c_input*noisy_images,c_noise, ctxt=ctxt)
+        pred_images = network(c_input*noisy_images,sigma_noise, ctxt=ctxt, mask=mask)
 
         # scaled target 
         scaled_target = (images-c_skip*noisy_images)/c_out
         
         # loss function
-        loss = self.loss(pred_images,scaled_target)
+        loss = self.loss(pred_images[mask],scaled_target[mask])
 
-        return loss
+        return {"noise_loss":loss}
 
-    def train_step(self, images, ctxt=None):
+    def train_step(self, images, ctxt=None, mask=None):
         # normalize images to have standard deviation of 1, like the noises
-        log={"image_loss_train": 0, "noise_loss_train":0}
         self.optimizer.zero_grad(set_to_none=True)
             
         # loss function
-        loss = self._shared_step(images, ctxt)
+        log = self._shared_step(images, ctxt, mask)
 
         # apply gradients
-        loss.backward()
+        log["noise_loss"].backward()
         self.optimizer.step()
-
-        log["noise_loss_train"] = loss.cpu().detach().numpy()
 
         # track the exponential moving averages of weights
         with T.no_grad():
             self.ema_network.exponential_moving_averages(self.network.state_dict(),
                                                         self.diffusion_config.ema)
 
-        # T.cuda.empty_cache()
-        return log
+        return {i:j.cpu().detach().numpy() for i,j in log.items()}
 
-    def reverse_diffusion(self, initial_noise, diffusion_steps, ctxt=None):
+    def reverse_diffusion(self, images, ctxt=None, mask=None):
         #heuns solver
-        sigma_steps = self.sample_sigma(np.arange(diffusion_steps), N=diffusion_steps,
-                                       n_imgs=len(initial_noise)
-                                       )
-        sigma_steps = sigma_steps.permute(1,0,2,3).unsqueeze(-1).float()
+        sigma_steps = self.sample_sigma(np.arange(self.n_diffusion_steps),
+                                        N=self.n_diffusion_steps,
+                                       n_imgs=len(images)
+                                       ).permute(1,0,2,3).float()
 
-        return self.solver(initial_noise=initial_noise,
+        if len(images.shape)+1!=len(sigma_steps.shape): # images might need addtional dimensions
+            sigma_steps = sigma_steps.unsqueeze(-1)
+
+        return self.solver(initial_noise=images,
                             sigma_steps=sigma_steps,
-                            ctxt=ctxt)
+                            ctxt=ctxt, mask=mask)
