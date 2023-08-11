@@ -430,7 +430,7 @@ class VisionTransformerLayer(nn.Module):
         return output_image+image_orig
 
 class PerceiverBlock(nn.Module):
-    def __init__(self, input_query_dims:list, output_query_dims:list,
+    def __init__(self, input_query_dims:int, output_query_dims:int,
                  latent_dims:list, n_processes=2, film_cfg:dict=None,
                  mlp_cfg:dict=None, attn_heads:int = 4, device:str="cuda"):
         super().__init__()
@@ -460,13 +460,13 @@ class PerceiverBlock(nn.Module):
         self.latent_arr = T.nn.Parameter(T.randn(*self.latent_dims))
         self.latent_mask = T.full(self.latent_arr.shape, True)
         
-        self.init_in_query = nn.LayerNorm(self.input_query_dims[-1])
-        self.init_out_query = nn.LayerNorm(self.output_query_dims[-1])
+        self.init_in_query = nn.LayerNorm(self.input_query_dims)
+        self.init_out_query = nn.LayerNorm(self.output_query_dims)
         self.post_self_attn_norm = nn.LayerNorm(self.latent_dims[-1])
         
         ### Encoder
         self.encode_layer = MultiHeadAttention(depth_q=self.latent_dims[-1],
-                                               depth_vk=self.input_query_dims[-1],
+                                               depth_vk=self.input_query_dims,
                                                attn_heads=self.attn_heads,
                                                zero_init=False)
 
@@ -495,12 +495,12 @@ class PerceiverBlock(nn.Module):
 
         ### Decoder
         self.last_query_mlp = PCMLP(
-                self.output_query_dims[-1],self.output_query_dims[-1],
-                norm_args={"normalized_shape":self.output_query_dims[-1]},
+                self.output_query_dims,self.output_query_dims,
+                norm_args={"normalized_shape":self.output_query_dims},
                 skip_cnt=False, **self.mlp_cfg
                 )
 
-        self.decode_layer = MultiHeadAttention(depth_q=self.output_query_dims[-1],
+        self.decode_layer = MultiHeadAttention(depth_q=self.output_query_dims,
                                                depth_vk=self.latent_dims[-1],
                                                attn_heads=self.attn_heads,
                                                zero_init=False)

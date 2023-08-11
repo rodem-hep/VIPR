@@ -65,15 +65,41 @@ def prepare_shapenet(h5_file):
     raise TypeError("data shape should be changed and mean/std")
     return np.float32(data), mask, data.shape[-1], mean, std, len(data)
 
-def fill_data_in_pc(sample, n_pc, idx_numbers, max_cnstits):
+def matrix_to_point_cloud(sample, idx_numbers):
     "sample: n_features x pc"
+    n_pc, num_per_event = np.unique(idx_numbers, return_counts=True)
+
+    n_events = len(n_pc)
+    # max_cnstits = np.max(max_cnstits)
+
+    # n_events = 10
+    # num_per_event = T.randint(5, 15, (n_events,))
+
+    # num_csts = num_per_event.sum()
+    # x = T.randn(len(sample), 3)
+
+    mask = np.arange(0, num_per_event.max())
+    mask = np.expand_dims(mask, 0)
+    mask = mask < np.expand_dims(num_per_event,1)
+
+    padded_tens = np.ones((n_events, num_per_event.max(), sample.shape[1]))*-1
+    padded_tens[mask] = sample
+    return padded_tens, mask
+
+def fill_data_in_pc(sample, idx_numbers):
+    # Deprecated!!!!!
+    "sample: n_features x pc"
+    n_pc, max_cnstits = np.unique(idx_numbers, return_counts=True)
+
+    n_pc = len(n_pc)
+    max_cnstits = np.max(max_cnstits)
     
-    new_sample = np.ones((n_pc, sample.shape[0], max_cnstits))*-999
+    new_sample = np.ones((n_pc, max_cnstits, sample.shape[1]))*-999
     new_mask = np.zeros((n_pc, max_cnstits))
     for nr, idx in tqdm(enumerate(np.unique(idx_numbers)), total=n_pc):
-        _sample=sample[:,idx_numbers==idx]
+        _sample=sample[idx_numbers==idx]
         new_sample[nr, :_sample.shape[0], :_sample.shape[1]] = _sample
-        new_mask[nr, :_sample.shape[1]] = 1
+        new_mask[nr, :_sample.shape[0]] = 1
     
     return new_sample, new_mask
 

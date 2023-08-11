@@ -1,15 +1,18 @@
 # from https://gitlab.cern.ch/mleigh/jetdiffusion/-/blob/matt_dev/src/physics.py
 import pyrootutils
-
 root = pyrootutils.setup_root(search_from=__file__, pythonpath=True)
+
+from typing import Union
 
 import numpy as np
 import torch as T
 import pandas as pd
-import random
+from torch.utils.data import Dataset,DataLoader
 
-from src.utils import undo_log_squash
+
+from src.utils import undo_log_squash, log_squash
 from src.eval_utils import EvaluateFramework
+from src.prepare_data import fill_data_in_pc, matrix_to_point_cloud
 from tools.transformations import log_squash, undo_log_squash
 
 def calculate_pT(px, py):
@@ -45,13 +48,16 @@ def jet_variables(sample, mask):
     jet_vars = pd.DataFrame(jet_vars, columns=["eta", "phi", "pT", "mass"])
     
     
-    return (sample, jet_vars)
+    return jet_vars
 
-class JetPhysics(EvaluateFramework):
-    def __init__(self, jet_path:str, pileup_path:str=None):
+class JetPhysics(EvaluateFramework, Dataset):
+    # TODO dangerous that it is both a eval framework and dataloader
+    def __init__(self, jet_path:Union[str, list], pileup_path:Union[str, list]=None, **kwargs):
         self.jet_path=jet_path
+        self.standardize_bool = kwargs.get("standardize_bool", False)
+        self.loader_config = kwargs.get("loader_config", {})
+        self.max_pileup_size = kwargs.get("max_pileup_size", {})
         self.pileup_path=pileup_path
-        self.col_cnts = [f"cnts_{i}"for i in ["eta", "phi", "pt"]]
         self.col_jets = [f"jet_{i}"for i in ["eta", "phi", "pT", "mass"]]
         self.hist_kwargs={"percentile_lst":[0, 99],
                      "style": {"bins": 40, "histtype":"step"},
@@ -60,24 +66,34 @@ class JetPhysics(EvaluateFramework):
                         {"linestyle": "dotted","color":"blue", "label":"Generated", "drawstyle":"steps-mid"}]
                      }
         
-        
-        if isinstance(jet_path, (list, str)):
-            (self.cnts_vars, self.mask_cnts, self.min_cnstits, self.max_cnstits,
-             _, _, self.n_pc) = self.load_csv(self.jet_path)
-        elif isinstance(jet_path, pd.DataFrame):
-            (self.cnts_vars, self.mask_cnts, self.min_cnstits, self.max_cnstits,
-             _, _, self.n_pc) = prepare_jet(jet_path)
-        else:
-            self.cnts_vars, self.mask_cnts = self.jet_path
+        # get jet data
+        (self.cnts_vars, self.mask_cnts, self.min_cnstits, self.max_cnstits, self.n_pc,
+         self.col_cnts) = self.load_csv(self.jet_path)
+        self.col_cnts = [f"cnts_{i}"for i in self.col_cnts]
+        self.jet_vars = self.physics_properties(self.cnts_vars[..., -3:],self.mask_cnts)
 
-        self.cnts_vars, self.jet_vars = self.physics_properties(self.cnts_vars,
-                                                                 self.mask_cnts)
-
-        if isinstance(pileup_path, str):
-            self.pileup_cnts = self.load_csv(self.pileup_path)
-            
-        self.cnts_vars_rel = self.relative_pos(self.cnts_vars.copy(),
+        self.cnts_vars_rel = self.relative_pos(self.cnts_vars[..., -3:].copy(),
                                                self.jet_vars)
+
+        # get jet data
+        if pileup_path is not None:
+            (self.pileup_cnts, self.pileup_mask_cnts, self.min_pileup_cnstits,
+             self.max_pileup_cnstits, self.n_pileup_pc, self.col_pileup_cnts
+             )  = self.load_csv(self.pileup_path)        
+    
+
+    def load_csv(self, paths):
+        df = [pd.read_csv(i, dtype=np.float32) for i in paths]
+        df = pd.concat(df, axis=0)
+        df=df.rename(columns={i:i.replace(" ", "") for i in df.columns})
+        event_nr_columns = [i for i in df.columns if "number" in i ]
+        if all(np.in1d(["px", "py", "pz"],df.columns)):
+            
+            df["eta"],df["phi"],df["pt"]= detector_dimensions(df[["px", "py", "pz"]].values)
+
+        cnts_df, mask = matrix_to_point_cloud(df.values, df[event_nr_columns].values)
+
+        return cnts_df, mask, mask.sum(1).min(), mask.sum(1).max(), len(cnts_df), df.columns
     
     @staticmethod
     def relative_pos(cnts_vars, jet_vars, reverse=False):
@@ -97,19 +113,74 @@ class JetPhysics(EvaluateFramework):
 
         return cnts_vars_rel
 
-    def get_diffusion_data(self):
-        return (self.cnts_vars_rel, self.mask_cnts, self.jet_vars.values,
-                self.min_cnstits, self.max_cnstits, self.n_pc)
                 
-    def load_csv(self, paths):
-        df = [pd.read_csv(i, dtype=np.float32) for i in paths]
-        df = pd.concat(df, axis=0)
-        df=df.rename(columns={i:i.replace(" ", "") for i in df.columns})
-        return prepare_jet(df)
 
     def physics_properties(self, sample, mask):
         # calculate eta/phi/pT and jet variables
         return jet_variables(sample, mask)
+    
+    def concat_pileup(self, idx_jet, n_pileup_to_select:int=100):
+        # generate events with pileup
+        cnts_vars = self.cnts_vars[idx_jet]
+        mask_cnts_vars = self.mask_cnts[idx_jet]
+
+        jet_vars = self.jet_vars.iloc[idx_jet:idx_jet+1]
+        
+        idx = np.random.choice(np.arange(0, self.n_pileup_pc,1), n_pileup_to_select)
+
+        pileup_cnts = self.pileup_cnts[idx]
+        pileup_cnts_mask = self.pileup_mask_cnts[idx]
+
+        pileup_cnts_rel = self.relative_pos(pileup_cnts[...,-3:].copy(), jet_vars)
+
+        delta_R_mask = np.sqrt(np.sum(pileup_cnts_rel[..., :2]**2, -1))<1
+
+        pileup_mask = delta_R_mask & pileup_cnts_mask
+        
+        # concat and fill full event matrix
+        # TODO should pply be shuffled at some point
+        evt_w_pileup = np.concatenate([cnts_vars[mask_cnts_vars],
+                                       pileup_cnts[pileup_mask]], 0)
+        
+        full_event = np.ones((self.max_pileup_size, cnts_vars.shape[-1]))*-999
+        full_event[:len(evt_w_pileup)] = evt_w_pileup
+        
+        
+        return full_event, np.any(full_event!=-999, -1)
+
+    def get_ctxt_shape(self):
+         # TODO not hardcode n features, add if statement for non-PC ctxt
+        return {"pc": [self.max_pileup_size, 3]}
+    
+    def get_diffusion_data(self):
+        return (self.cnts_vars_rel, self.mask_cnts, self.jet_vars.values,
+                self.min_cnstits, self.max_cnstits, self.n_pc)
+
+    def train_dataloader(self):
+        return DataLoader(self, **self.loader_config)
+
+    def test_dataloader(self):
+        return DataLoader(self, **self.loader_config)
+
+    def _shape(self):
+        return [150, 3] # TODO should not be hardcoded!
+    
+    def __len__(self):
+        return self.n_pc
+
+
+    def __getitem__(self, idx):
+        data = {"images": np.float32(self.cnts_vars[idx, ..., 3:6]), "mask": self.mask_cnts[idx]}
+        # data = {"images": np.float32((self.sample[idx]-self.mean)/self.std), "mask": self.mask[idx]}
+
+        if True: # TODO add proper boolean
+            data["ctxt"] = {}
+            event, mask = self.concat_pileup(idx)
+            # data["ctxt"] = np.float32((self.ctxt[idx]-self.ctxt_mean)/self.ctxt_std)
+            data["ctxt"]["pc"] = event[..., 3:6]
+            data["ctxt"]["mask"] = mask
+
+        return data
     
     def __call__(self, gen_data, mask, ctxt):
         log={}
@@ -132,8 +203,7 @@ class JetPhysics(EvaluateFramework):
                                   hist_kwargs=self.hist_kwargs)
 
         return log
-        
-    
+
 
 def prepare_jet(df, dummy_val = -999):
     df = df.values
@@ -220,13 +290,42 @@ def numpy_locals_to_mass_and_pt(csts: np.ndarray, mask: np.ndarray,
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    PATH = ["/home/users/a/algren/scratch/diffusion/pileup/ttbar_processed.csv"]
+    PATH = ["/home/users/a/algren/scratch/diffusion/pileup/ttbar.csv"]
+    PILEUP_PATH = ["/home/users/a/algren/scratch/diffusion/pileup/pileup.csv"]
     
-    physics = JetPhysics(PATH)
-    mass = physics.jet_vars["mass"]
-    mask = physics.jet_vars["pT"]>450
-    plt.hist(mass[mask], bins=50, range=[0, 300])
-    plt.xlabel("mass")
-    plt.figure()
-    plt.hist(physics.jet_vars["pT"][mask], bins=50,  range=[250, 750])
-    plt.xlabel("pT")
+    physics = JetPhysics(PATH, pileup_path=PILEUP_PATH)
+    
+    dataloader = iter(DataLoader(physics))
+    
+    data = next(dataloader)
+    
+    # # generate events with pileup
+    # idx_jet = 0
+    # events_with_pileup, mask = physics.concat_pileup(0)
+    
+    # for i in range(3):
+    #     plt.figure()
+    #     _,bins, _ =plt.hist(events_with_pileup[mask, i+3], bins=50, density=True, label="jet cnts+pileup cnts", alpha=0.5)
+    #     _, bins, _ = plt.hist(physics.cnts_vars[idx_jet][physics.mask_cnts[idx_jet]][:,i+3], bins=bins, density=True, label="jet cnts", alpha=0.5)
+    #     # plt.hist(pileup_cnts_rel[pileup_cnts_mask & delta_R_mask][:,i], bins=bins, density=True, label="pileup cnts", alpha=0.5)
+    #     # plt.xlabel(r"$\Delta$"+physics.col_cnts[i+3])
+    #     plt.xlabel(physics.col_cnts[i+3])
+    #     # plt.legend(title=f"Total cnts {np.sum(physics.mask_cnts[idx_jet])+np.sum(pileup_cnts_mask & delta_R_mask)}")
+    #     plt.legend(title=f"Total cnts")
+    
+    
+    if False:
+        mass = physics.jet_vars["mass"]
+        mask = physics.jet_vars["pT"]>450
+        plt.hist(mass[mask], bins=50, range=[0, 300])
+        plt.xlabel("mass")
+        plt.figure()
+        plt.hist(physics.jet_vars["pT"][mask], bins=50,  range=[250, 750])
+        plt.xlabel("pT")
+        for i in range(3,6):
+        # for i in range(physics.cnts_vars.shape[-1]):
+            plt.figure()
+            plt.hist(physics.cnts_vars[physics.mask_cnts][:,i], bins=50)
+            # plt.hist(log_squash(physics.cnts_vars[physics.mask_cnts][:,i]), bins=50)
+            plt.xlabel(physics.col_cnts[i])
+            plt.yscale("log")

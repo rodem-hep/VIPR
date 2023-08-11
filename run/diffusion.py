@@ -271,7 +271,10 @@ def main(config):
     dataloader = hydra.utils.instantiate(config.data_cfgs)
 
     #dataloader
-    eval_fw = hydra.utils.instantiate(config.eval)
+    if "JetPhysics" in dataloader.__str__():
+        eval_fw = copy.deepcopy(dataloader)
+    else:
+        eval_fw = hydra.utils.instantiate(config.eval)
 
     wandb.config = omegaconf.OmegaConf.to_container(
         config, resolve=True, throw_on_missing=True
@@ -283,9 +286,7 @@ def main(config):
     test_loader = dataloader.test_dataloader()
 
     # init network
-    network = hydra.utils.instantiate(config.model,
-                                      sentence_len=dataloader.get_max_cnstits(),
-                                      ctxt_dims=train_loader.dataset.ctxt.shape[-1])
+    network=hydra.utils.instantiate(config.model,ctxt_dims=dataloader.get_ctxt_shape())
     diffusion_config = hydra.utils.instantiate(config.diffusion_cfg)
     diffusion_config.init_noise.shape = list(dataloader._shape())
     # diffusion_config.init_noise.n_constituents_min = dataloader.get_min_cnstits()

@@ -1,5 +1,6 @@
 "Transformers"
 import math
+from typing import Union
 import torch as T
 import torch.nn as nn
 import torchvision as TV
@@ -13,7 +14,7 @@ import src.positional_encoding as pe
 from src.models.transformer import MultiHeadAttention, PerceiverBlock, PCMLP
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, vkq_dims, sentence_len:int, ctxt_dims=None,
+    def __init__(self, vkq_dims, ctxt_dims:Union[int, dict]=None,
                  pcivr_cfg:dict=None, mlp_cfg:dict=None,
                  upscale_dims:int=64, n_encoders=2,
                  embedding_dims=None, attn_heads:int = 4, device:str="cuda"):
@@ -26,7 +27,6 @@ class TransformerEncoder(nn.Module):
         self.pcivr_cfg=pcivr_cfg
         self.device = device
         self.mlp_cfg=mlp_cfg if mlp_cfg!=None else {}
-        self.sentence_len=sentence_len
         self.embedding_dims = 0 if embedding_dims is None else embedding_dims
 
         self.trans_encoder_layers = nn.ModuleList([])
@@ -90,7 +90,7 @@ class TransformerEncoder(nn.Module):
             input_vkq = T.concat(
                 [input_vkq, 
                 #  noise_variances.permute(0, 2,1).repeat(1,1,input_vkq.shape[-1])],1
-                 noise_variances.expand(len(noise_variances), self.sentence_len, 
+                 noise_variances.expand(len(noise_variances), input_vkq.shape[1], 
                                         noise_variances.shape[-1])],
                  -1
                 )

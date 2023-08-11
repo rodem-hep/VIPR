@@ -12,7 +12,6 @@ embedding_dims: 32
 upscale_dims: 128
 n_encoders: 4
 attn_heads: 16
-sentence_len: null
 
 mlp_cfg:
   act_str: leakyrelu
@@ -20,9 +19,7 @@ mlp_cfg:
   norm: layer
 
 pcivr_cfg:
-  input_query_dims: 
-    - ${...sentence_len}
-    - ${...upscale_dims}
+  input_query_dims: ${...upscale_dims}
   output_query_dims:  ${.input_query_dims}
   latent_dims: [16, 64] # n_cons x features
   n_processes: 1
