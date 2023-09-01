@@ -14,15 +14,18 @@ class Solvers(nn.Module):
         else:
             self.solver = self.ddim
 
-    def heun2d(self, initial_noise:T.Tensor | tuple, sigma_steps:np.ndarray, ctxt=None,
+    def heun2d(self, initial_noise:T.Tensor | tuple, sigma_steps:np.ndarray, ctxt:dict=None,
                mask:T.Tensor=None)->T.Tensor:
+        if ctxt is None:
+            ctxt = {}
+
         #heuns 2nd solver
         # scale to correct std
         x = initial_noise.detach()*sigma_steps[0]
         for i in range(len(sigma_steps)-1):
 
             # left tangent
-            dx = (x -self.denoise(x, sigma_steps[i],training=False, ctxt=ctxt,
+            dx = (x -self.denoise(x, sigma_steps[i],training=False, ctxt=ctxt.copy(),
                                   mask=mask)
                   )/sigma_steps[i]
             dt = (sigma_steps[i+1]-sigma_steps[i])
@@ -33,7 +36,7 @@ class Solvers(nn.Module):
                 # right tangent
                 dx_ = 1/sigma_steps[i+1] * (x_1 -self.denoise(x_1, sigma_steps[i+1],
                                                          training=False,
-                                                         ctxt=ctxt,
+                                                         ctxt=ctxt.copy(),
                                                          mask=mask))
 
                 x = (x+dt*(1/2*dx+1/2*dx_)).detach()
@@ -207,7 +210,7 @@ class UniformDiffusion(nn.Module):
 
 
 class ElucidatingDiffusion(Solvers):
-    def __init__(self, rho=7, s_min=1e-5, s_max=80, s_data=1):
+    def __init__(self, rho=7, s_min=0.002, s_max=80, s_data=1):
         super().__init__("heun2d")
         self.rho=rho
         self.s_min=s_min
@@ -223,7 +226,7 @@ class ElucidatingDiffusion(Solvers):
             self.s_max**self.inv_rho
             +i/(N-1)*(self.s_min**self.inv_rho-self.s_max**self.inv_rho)
                       )**self.rho]*n_imgs
-        time_step = T.tensor(np.stack(time_step, 0), device=self.device)
+        time_step = T.tensor(np.stack(time_step, 0))
         return utils.append_dims(time_step, target_dims=4)
 
     
@@ -242,13 +245,16 @@ class ElucidatingDiffusion(Solvers):
         return c_skip, c_out, c_input
 
     def sample_time(self,size, target_dims):
-        noise = T.randn(size, device=self.device, requires_grad=True)
+        noise = T.randn(size, requires_grad=True)
         noise = T.exp(noise*self.P_std+self.P_mean)
         noise = T.clip(noise, self.s_min, self.s_max)
         return utils.append_dims(noise, target_dims=target_dims)
     
     def denoise(self, images, sigma, training, ctxt=None, mask=None):
         # the exponential moving average weights are used at evaluation 
+        if ctxt is None:
+            ctxt={}
+
         if training:
             network = self.network
         else:
@@ -262,7 +268,7 @@ class ElucidatingDiffusion(Solvers):
         c_skip, c_out, c_input = self.precondition(sigma)
 
         # predict noise component and calculate the image component using it
-        network_output = network(c_input*images,sigma, ctxt=ctxt, mask=mask)
+        network_output = network(c_input*images,sigma, ctxt=ctxt.copy(), mask=mask).cpu()
         
         return c_skip*images+c_out*network_output
     
@@ -277,18 +283,10 @@ class ElucidatingDiffusion(Solvers):
             network = self.ema_network
             network.eval()
 
-        # images = images.to(self.device)
-        
-        # normalising images
-        # if self.normalizer is not None:
-        #     images = self.normalizer(images)
-        #     if (ctxt is not None) and (len(ctxt.shape)>2):
-        #         ctxt = self.normalizer(ctxt).to(self.device)
-
         # sample noise distribution
         sigma_noise = self.sample_time(len(images), len(images.shape))
 
-        # calculate preconditions 
+        # calculate preconditions
         c_skip, c_out, c_input = self.precondition(sigma_noise)
 
         #generate noise
@@ -297,14 +295,17 @@ class ElucidatingDiffusion(Solvers):
         # mix the images with noises accordingly
         noisy_images = images + noises
 
-        # predict noise component and calculate the image component using it
-        pred_images = network(c_input*noisy_images,sigma_noise, ctxt=ctxt, mask=mask)
+        with T.autocast(device_type=self.device, dtype=T.float16):
+            # predict noise component and calculate the image component using it
+            pred_images = network(c_input*noisy_images,sigma_noise, ctxt=ctxt, mask=mask)
+            assert pred_images.dtype is T.float16
 
-        # scaled target 
-        scaled_target = (images-c_skip*noisy_images)/c_out
-        
-        # loss function
-        loss = self.loss(pred_images[mask],scaled_target[mask])
+            # scaled target
+            scaled_target = (images-c_skip*noisy_images)/c_out
+            
+            # loss function
+            loss = self.loss(pred_images[mask],scaled_target[mask].to(self.device))
+            assert loss.dtype is T.float32
 
         return {"noise_loss":loss}
 
@@ -316,8 +317,14 @@ class ElucidatingDiffusion(Solvers):
         log = self._shared_step(images, ctxt, mask)
 
         # apply gradients
-        log["noise_loss"].backward()
-        self.optimizer.step()
+        # apply gradients w/wo mp
+        if self.loss_scaler is not None:
+            self.loss_scaler.scale(log["noise_loss"]).backward()
+            self.loss_scaler.step(self.optimizer)
+            self.loss_scaler.update()
+        else:
+            log["noise_loss"].backward()
+            self.optimizer.step()
 
         # track the exponential moving averages of weights
         with T.no_grad():

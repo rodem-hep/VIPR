@@ -505,23 +505,24 @@ class PerceiverBlock(nn.Module):
                                                attn_heads=self.attn_heads,
                                                zero_init=False)
    
-    def forward(self, input_arr:T.Tensor, input_mask:T.Tensor, output_arr:T.Tensor,
-                output_mask:T.Tensor, ctxt:T.Tensor=None) -> T.Tensor:
+    def forward(self, input_arr:T.Tensor, input_mask:T.Tensor,
+                output_arr:T.Tensor, output_mask:T.Tensor,
+                scalar_ctxt:T.Tensor=None) -> T.Tensor:
         
         # init film context
         if self.film_layer is not None:
-            self.film_layer(ctxt)
+            self.film_layer(scalar_ctxt)
         
         latent_ten = self.latent_arr.expand(len(input_arr),*self.latent_arr.shape)
         
-        ### Encoder
+        ### Encode input_arr to latent_ten size
         norm_input_arr = self.init_in_query(input_arr)
         latent_ten = self.encode_layer(norm_input_arr, norm_input_arr,
                                         latent_ten,
                                         mask_vk=input_mask,
                                         )+latent_ten
 
-        #ctxt
+        #ctxt from FiLM
         if self.film_layer is not None:
             FiLM_para = next(self.film_layer)
             latent_vals =  FiLM_para[:,0:1]*latent_ten+FiLM_para[:,1:2]

@@ -1,5 +1,5 @@
 # diffusion
-eval_iters: 10
+eval_iters: 5
 n_diffusion_steps: 20
 min_signal_rate : 0.02
 max_signal_rate : 1.00

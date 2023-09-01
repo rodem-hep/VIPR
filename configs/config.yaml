@@ -9,7 +9,8 @@ defaults:
   - diffusion_cfg: default.yaml
   - model: pc_cfg.yaml
   
-  - data_cfgs: pc_jet.yaml
+  # - data_cfgs: pc_jet.yaml
+  - data_cfgs: pc_top_jet.yaml
   - eval: jet.yaml
 
   # - data_cfgs: pc_mnist.yaml
@@ -25,19 +26,19 @@ save_path: ${path}/${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
 device: cuda
 
 wandb:
-  project: pc-${..data_cfgs.data_name}-diffusion
+  project: pc-${..data_cfgs.train.data_name}-diffusion
   entity: malteal
-  mode: offline # online offline
-  name: ${..data_cfgs.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+  mode: online # online offline
+  name: ${..data_cfgs.train.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
 
 data_cfgs:
   standardize_bool: False
   loader_config:
     pin_memory: true
-    batch_size: 128
-    num_workers: 4
-    drop_last: True
-    shuffle: True
-    # prefetch_factor: 8
-    persistent_workers: True
+    batch_size: 256
+    num_workers: 16
+    # drop_last: True
+    shuffle: true
+    # prefetch_factor: 2
+    # persistent_workers: True
     pin_memory_device: ${device}

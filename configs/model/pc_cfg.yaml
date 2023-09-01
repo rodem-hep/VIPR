@@ -1,5 +1,5 @@
 _target_: src.models.pc_model.TransformerEncoder
-# _convert_: object
+_convert_: object
 
 device: ${device}
 
@@ -19,7 +19,7 @@ mlp_cfg:
   norm: layer
 
 pcivr_cfg:
-  input_query_dims: ${...upscale_dims}
+  input_query_dims: ${..upscale_dims}
   output_query_dims:  ${.input_query_dims}
   latent_dims: [16, 64] # n_cons x features
   n_processes: 1

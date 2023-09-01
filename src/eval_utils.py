@@ -18,10 +18,11 @@ class EvaluateFramework:
                                             **copy.deepcopy(hist_kwargs))
             
             plot.plot_ratio(counts_dict, truth_key="dist_0", ax=ax_2,
-                            zero_line_unc=True, normalise=True,
+                            zero_line_unc=True, normalise=False,
                             ylim=[0.8, 1.2], **copy.deepcopy(ratio_kwargs))
             ax_2.set_xlabel(name)
             log[f"{name}_hist"] =  wandb.Image(fig2img(fig))
+            plt.close(fig)
 
         return log
             

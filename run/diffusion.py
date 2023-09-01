@@ -25,7 +25,6 @@ import src.diffusion_schemes as ds
 # from src.models.image_model import UNet # used on hydra
 from src.utils import fig2img
 import src.pipeline as pl
-import src.physics as jetpy
 
 class DiffusionModel(
     # ds.UniformDiffusion
@@ -44,18 +43,23 @@ class DiffusionModel(
         self.diffusion_config=diffusion_config
         self.n_diffusion_steps = diffusion_config.n_diffusion_steps
         self.save_path=save_path
+        
+        # mixed precision
+        # self.loss_scaler = None
+        self.loss_scaler = T.cuda.amp.GradScaler()
 
         # get norms
-        self.mean = T.tensor(self.train_loader.dataset.mean, device=self.device)
-        self.std = T.tensor(self.train_loader.dataset.std, device=self.device)
-        self.ctxt_mean = T.tensor(self.train_loader.dataset.ctxt_mean, device=self.device)
-        self.ctxt_std = T.tensor(self.train_loader.dataset.ctxt_std, device=self.device)
+        self.cnts_mean = T.tensor(self.train_loader.dataset.mean["cnts"]).float()
+        self.cnts_std = T.tensor(self.train_loader.dataset.std["cnts"]).float()
+        # self.ctxt_mean = T.tensor(self.train_loader.dataset.ctxt_mean, device=self.device)
+        # self.ctxt_std = T.tensor(self.train_loader.dataset.ctxt_std, device=self.device)
         
         self.network = network.to(device)
+        self.ema_network = copy.deepcopy(self.network)
+
         self.optimizer = T.optim.AdamW(self.network.parameters(),
                                        lr=diffusion_config.learning_rate)
 
-        self.ema_network = copy.deepcopy(self.network)
 
         self.log_columns=["epoch", "denoise_images"]
         self.log_columns += [f"{j}_{i}" for i in ["train", "valid"]
@@ -63,14 +67,15 @@ class DiffusionModel(
         self.log={i:[] for i in self.log_columns}
 
         self.loss = nn.MSELoss()
-        # self.loss = nn.HuberLoss()
+
         self.eval_ctxt =None
         if self.test_loader.dataset.ctxt is not None:
-            self.eval_ctxt = self.test_loader.dataset.get_norm_ctxt()
+            self.eval_ctxt = self.test_loader.dataset.get_normed_ctxt()
 
         # eval with same noise
+        n_cnts = self.eval_ctxt.pop("true_n_cnts",self.train_loader.dataset.max_cnstits)
         self.initial_noise = pl.generate_gaussian_noise(eval_ctxt=self.eval_ctxt,
-                                                        n_constituents=self.train_loader.dataset.mask.sum(1),
+                                                        n_constituents=n_cnts,
                                                         **diffusion_config.init_noise)
         
         # save best
@@ -94,7 +99,7 @@ class DiffusionModel(
 
     def denormalize(self, images, clip_bool:bool=True):
         # convert the pixel values back to 0-1 range
-        images = self.mean + images * self.std
+        images = self.cnts_mean + images * self.cnts_std
         return T.clip(images, min, max) if clip_bool else images
 
     def generate(self, images,  ctxt=None, mask=None):
@@ -116,27 +121,36 @@ class DiffusionModel(
     
     def generate_samples(self):
 
-        generated_data={"gen_data":[], "mask":[], "ctxt":[]}
+        generated_data={"gen_data":T.tensor([]), "mask":T.tensor([]), "ctxt":{}}
 
         for sample in tqdm(self.initial_noise, total=len(self.initial_noise),
-                            disable=len(self.initial_noise)==1):
+                            disable=True # len(self.initial_noise)==1
+                            ):
 
-            sample = {i:j.to(self.device) for i,j in sample.items()}
+            # sample = {i:j.to(self.device) for i,j in sample.items()}
 
-            _generated = self.generate(**sample)
+            _generated = self.generate(**copy.deepcopy(sample))
 
-            for i in generated_data:
-                generated_data[i].append(_generated[i])
-
-        generated_data = {i:T.concat(j, 0).cpu().detach().numpy()
-                          for i, j in generated_data.items() if len(j)>0}
+            # concat to generated_data
+            for i,j in _generated.items():
+                if isinstance(j, dict): # for dict nested ctxt
+                    for k,l in j.items():
+                        if k not in generated_data[i]:
+                            generated_data[i][k]=T.tensor([])
+                        
+                        generated_data[i][k] = T.concat([generated_data[i][k], l],0)
+                else:
+                    if T.isnan(_generated[i]).any():
+                        print("why")
+                    generated_data[i] = T.concat([generated_data[i], _generated[i]],0)
 
         return generated_data
 
     def run_evaluate(self, test_loader, epoch_nr=0):
 
         # plot random generated images for visual evaluation of generation quality
-        if (not epoch_nr%self.eval_iters):
+        if (not epoch_nr%self.eval_iters) & False:
+
             generated_data = self.generate_samples()
             # if isinstance(self.eval_fw, type): # check if eval_fw is class
             log = self.eval_fw(**generated_data)
@@ -149,17 +163,17 @@ class DiffusionModel(
             noise_loss = {i.replace("_valid", ""):[] for i in self.log.keys()
                           if "valid" in i}
             # run over training samples
-            for sample in test_loader:
+            for sample in self.test_loader:
 
-                sample = {i: j.to(self.device) for i,j in sample.items()}
+                # sample = {i: j.to(self.device) for i,j in sample.items()}
                 
-                log_ep = self._shared_step(**sample,
-                                           training=False)
+                log_ep = self._shared_step(**copy.deepcopy(sample), training=False)
                 for i,j in log_ep.items():
                     noise_loss[i].append(j.cpu().detach().numpy())
 
             for i,j in noise_loss.items():
-                self.log[f"{i}_valid"] = np.mean(j)
+                if len(j)>0:
+                    self.log[f"{i}_valid"] = np.mean(j)
                 
     def run_training(self, run_eval=True):
 
@@ -176,7 +190,7 @@ class DiffusionModel(
             # run over training samples
             for nr, sample in enumerate(self.train_loader):
 
-                sample = {i: j.to(self.device) for i,j in sample.items()}
+                # sample = {i: j.to(self.device) for i,j in sample.items()}
 
                 log_ep = self.train_step(**sample)
                 
@@ -234,7 +248,7 @@ class DiffusionModel(
             fig = fig2img(fig)
             fig = wandb.Image(fig)
         self.log[name] = fig
-        plt.close("all")
+        plt.close(fig)
         return test_images, mask
 
 def get_standardization(loader, pc:bool=False):
@@ -268,11 +282,17 @@ def get_standardization(loader, pc:bool=False):
 @hydra.main(version_base=None, config_path=str(root / "configs"), config_name="config")
 def main(config):
     #dataloader
-    dataloader = hydra.utils.instantiate(config.data_cfgs)
+    train_loader = hydra.utils.instantiate(config.data_cfgs.train,
+                                           loader_config=config.data_cfgs.loader_config)
+    test_loader = hydra.utils.instantiate(config.data_cfgs.valid,
+                                          loader_config=config.data_cfgs.loader_config)
+    test_loader.jet_norms = train_loader.jet_norms
+    test_loader.mean = train_loader.mean
+    test_loader.std = train_loader.std
 
     #dataloader
-    if "JetPhysics" in dataloader.__str__():
-        eval_fw = copy.deepcopy(dataloader)
+    if "Jet" in test_loader.__str__():
+        eval_fw = test_loader
     else:
         eval_fw = hydra.utils.instantiate(config.eval)
 
@@ -282,21 +302,18 @@ def main(config):
 
     wandb.init(config=config, **config.wandb)
 
-    train_loader = dataloader.train_dataloader()
-    test_loader = dataloader.test_dataloader()
-
     # init network
-    network=hydra.utils.instantiate(config.model,ctxt_dims=dataloader.get_ctxt_shape())
+    network=hydra.utils.instantiate(config.model,ctxt_dims=train_loader.get_ctxt_shape())
     diffusion_config = hydra.utils.instantiate(config.diffusion_cfg)
-    diffusion_config.init_noise.shape = list(dataloader._shape())
-    # diffusion_config.init_noise.n_constituents_min = dataloader.get_min_cnstits()
-    # diffusion_config.init_noise.n_constituents_max = dataloader.get_max_cnstits()
+    diffusion_config.init_noise.shape = list(train_loader._shape())
+    # diffusion_config.init_noise.n_constituents_min = train_loader.get_min_cnstits()
+    # diffusion_config.init_noise.n_constituents_max = train_loader.get_max_cnstits()
 
     # init diffusion
     model = DiffusionModel(diffusion_config=diffusion_config,
                            network=network,
-                           train_loader=train_loader,
-                           test_loader=test_loader,
+                           train_loader=train_loader.train_dataloader(),
+                           test_loader=test_loader.test_dataloader(),
                            device=config.device,
                            save_path=config.save_path,
                            eval_fw=eval_fw,
@@ -309,7 +326,7 @@ def main(config):
     if config.diffusion_cfg.super_res & (model.wandb is not None):
         #find std and mean of data
         data, data_ctxt, _, _ = get_standardization(train_loader,
-                                                pc = "PointCloud" in dataloader.__str__())
+                                                pc = "PointCloud" in train_loader.__str__())
         model.plot_images(test_images=data_ctxt[:9], name="context_image")
         model.plot_images(test_images=data[:9], name = "true_image")
     # else:
@@ -317,9 +334,7 @@ def main(config):
     #     # model.plot_images(name="context_image")
     #     data_ctxt=[None]
 
-    model.run_training(#eval_ctxt=data_ctxt[:9] if data_ctxt[0] is not None else None,
-                       run_eval=True
-                       )
+    model.run_training(run_eval=True)
 
         
 if __name__ == "__main__":

@@ -1,0 +1,32 @@
+train:
+  _target_: src.physics.JetPhysics
+  _convert_: object
+
+  jet_path: /srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/path_lists.yaml
+  # jet_path: [/home/users/a/algren/scratch/diffusion/pileup/ttbar.csv, ]
+  sub_col: train
+  n_files: 20
+  n_pileup_to_select: 0
+
+  pileup_path: ["/home/users/a/algren/scratch/diffusion/pileup/pileup.csv", ]
+
+  target_names: ['eta', 'phi', 'pt']
+  jet_scalars_cols: ["eta", "phi", "pt", "mass"]
+
+  data_name: jet
+
+valid:
+  _target_: src.physics.JetPhysics
+  _convert_: object
+
+  jet_path: ${..train.jet_path}
+  sub_col: valid
+  n_files: 2
+  n_pileup_to_select: ${..train.n_pileup_to_select}
+
+  pileup_path: ${..train.pileup_path}
+
+  target_names: ${..train.target_names} #['eta', 'phi', 'pt']
+  jet_scalars_cols: ${..train.jet_scalars_cols} #["eta", "phi", "pt", "mass"]
+
+  data_name: jet

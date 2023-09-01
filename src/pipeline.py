@@ -115,22 +115,22 @@ class PointCloudModule:
         return self.data_name
 
 class PCLoader(Dataset):
-    def __init__(self, sample, mask, ctxt=None):
+    def __init__(self, sample, mask, ctxt=None, run_norm:bool=False):
         self.sample=sample
         self.mask=mask
         self.ctxt = ctxt
-
+        self.run_norm=run_norm
         self.mean = getattr(self, 'mean', np.zeros(self.sample.shape[-1],))
         self.std = getattr(self, 'std', np.ones(self.sample.shape[-1],))
 
-        if ctxt is not None:
+        if (ctxt is not None) & self.run_norm:
             self.ctxt_mean = getattr(self, 'ctxt_mean', np.zeros(self.ctxt.shape[-1],))
             self.ctxt_std = getattr(self, 'ctxt_std', np.ones(self.ctxt.shape[-1],))
 
     def get_norm_data(self):
         return (self.sample-self.mean)/self.std
 
-    def get_norm_ctxt(self):
+    def get_normed_ctxt(self):
         return (self.ctxt-self.ctxt_mean)/self.ctxt_std
 
     def _get_mean(self):
@@ -148,10 +148,21 @@ class PCLoader(Dataset):
         return self.sample.shape[1:]
 
     def __getitem__(self, idx):
-        data = {"images": np.float32((self.sample[idx]-self.mean)/self.std), "mask": self.mask[idx]}
-
+        data = {"images": None, "mask": self.mask[idx]}
+        if self.run_norm:
+            _data = np.float32((self.sample[idx]-self.mean)/self.std)
+        else:
+            _data = self.sample[idx]
+            
+        data["images"] = _data
+            
         if self.ctxt is not None:
-            data["ctxt"] = np.float32((self.ctxt[idx]-self.ctxt_mean)/self.ctxt_std)
+            data["ctxt"] = {}
+            if "cnts" in self.ctxt:
+                data["ctxt"]["cnts"] = np.float32(self.ctxt["cnts"][idx])
+                data["ctxt"]["mask"] = self.ctxt["mask"][idx] # TODO not normed
+            if "scalars" in self.ctxt:
+                data["ctxt"]["scalars"] = np.float32(self.ctxt["scalars"][idx])
 
         return data
 
@@ -240,13 +251,18 @@ def generate_gaussian_noise(shape:list, datatype:str,
         # calculate the n constituents
         if isinstance(n_constituents, tuple):
             n_constituents = np.random.randint(*n_constituents, size)
+        elif isinstance(n_constituents, int):
+            n_constituents = np.random.randint(1, n_constituents, size=size)  
+            
+        if not isinstance(n_constituents, np.ndarray):
+            raise TypeError("n_constituents has to be a np.array")
 
         mask = np.zeros([size]+shape[:1])==1
         for nr,i in enumerate(n_constituents[:size]):
             mask[nr, :i] = True
         
         return DataLoader(
-            PCLoader(T.randn(tuple([size]+shape)).numpy(),mask,eval_ctxt),
+            PCLoader(T.randn(tuple([size]+shape)).numpy(),mask,ctxt=eval_ctxt),
             batch_size=128, num_workers=4)
 
 if __name__ == "__main__":
