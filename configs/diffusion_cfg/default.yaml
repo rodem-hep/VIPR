@@ -15,8 +15,6 @@ super_res: False
 
 init_noise:
   datatype: pc #image
-  # n_constituents_min: null
-  # n_constituents_max: null
   device: ${device}
   size: 5_000
 

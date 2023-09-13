@@ -1,54 +1,56 @@
-_target_: src.pipeline.DataModule
-_convert_: object
+# _target_: src.pipeline.DataModule
+# _convert_: object
 
-run_img_enc_test: true
+data_name: animal_img
 
-train_set:
-  _target_: torchvision.datasets.ImageFolder
-  _partial_: True
-  root: /srv/beegfs/scratch/groups/rodem/datasets/afhq_v2/train/
-  transform:
-    _target_: torchvision.transforms.Compose
-    transforms:
-      - _target_: torchvision.transforms.RandomHorizontalFlip
-      - _target_: torchvision.transforms.RandomResizedCrop
-        antialias: True
-        size: 64
-        scale: [0.6,1]
-        ratio: [0.95, 1.05]
-      - _target_: torchvision.transforms.ToTensor
-
-test_set:
-  _target_: torchvision.datasets.ImageFolder
-  _partial_: True
-  root: /srv/beegfs/scratch/groups/rodem/datasets/afhq_v2/test/
-  transform: ${..train_set.transform}
-
-loader_config:
-  pin_memory: true
-  batch_size: 96
-  num_workers: 4
-  drop_last: True
-  shuffle: True
-  persistent_workers: True
-  pin_memory_device: cuda
-  prefetch_factor: 4
-
-img_enc:
+train:
   _target_: src.pipeline.ImageModule
-  _partial_: True
-  img_enhancement: 
-    _target_: torchvision.transforms.Compose
-    transforms:
-      - _target_: torchvision.transforms.Resize
-        antialias: True
-        size: 16
-        interpolation:
-          _target_: torchvision.transforms.InterpolationMode
-          value: bilinear
-      - _target_: torchvision.transforms.Resize
-        antialias: True
-        size: 64
-        interpolation:
-          _target_: torchvision.transforms.InterpolationMode
-          value: bilinear
+
+  img_enc: ${..img_enc}
+  # run_img_enc_test: true
+  
+  data:
+    _target_: torchvision.datasets.ImageFolder
+    # _partial_: True
+    root: /srv/beegfs/scratch/groups/rodem/datasets/afhq_v2/train/
+    transform:
+      _target_: torchvision.transforms.Compose
+      transforms:
+        - _target_: torchvision.transforms.RandomHorizontalFlip
+        - _target_: torchvision.transforms.RandomResizedCrop
+          antialias: True
+          size: 64
+          scale: [0.6,1]
+          ratio: [0.95, 1.05]
+        - _target_: torchvision.transforms.ToTensor
+
+valid:
+  _target_: src.pipeline.ImageModule
+
+  img_enc: ${..img_enc}
+  # run_img_enc_test: true
+  
+  data:
+    _target_: torchvision.datasets.ImageFolder
+    # _partial_: True
+    root: /srv/beegfs/scratch/groups/rodem/datasets/afhq_v2/test/
+    transform: ${...train.data.transform}
+
+# img_enc:
+#   _target_: src.pipeline.ImageModule
+#   _partial_: True
+img_enc: 
+  _target_: torchvision.transforms.Compose
+  transforms:
+    - _target_: torchvision.transforms.Resize
+      antialias: True
+      size: 16
+      interpolation:
+        _target_: torchvision.transforms.InterpolationMode
+        value: bilinear
+    - _target_: torchvision.transforms.Resize
+      antialias: True
+      size: 64
+      interpolation:
+        _target_: torchvision.transforms.InterpolationMode
+        value: bilinear

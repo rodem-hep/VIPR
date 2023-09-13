@@ -105,7 +105,7 @@ class UniformDiffusion(nn.Module):
         # important line:
         # at the first sampling step, the "noisy image" is pure noise
         # but its signal rate is assumed to be nonzero (min_signal_rate)
-        next_noisy_images = images
+        next_noisy_images = images.to(self.device)
         for step in range(self.n_diffusion_steps):
             noisy_images = next_noisy_images.detach()
 
@@ -116,7 +116,7 @@ class UniformDiffusion(nn.Module):
             noise_rates, signal_rates = self.uniform_diffusion_time(diffusion_times)
             pred_noises, pred_images = self.denoise(
                 noisy_images, noise_rates, signal_rates, training=False,
-                ctxt=ctxt, mask=mask
+                ctxt=ctxt.copy(), mask=mask
             )
             # network used in eval mode
 
@@ -130,7 +130,7 @@ class UniformDiffusion(nn.Module):
             )
             # this new noisy image will be used in the next step
 
-        return pred_images
+        return pred_images.cpu()
     
     def denoise(self, noisy_images, noise_rates, signal_rates, training, ctxt=None,
                 mask=None):
@@ -164,8 +164,7 @@ class UniformDiffusion(nn.Module):
 
         # track the exponential moving averages of weights
         with T.no_grad():
-            self.ema_network.exponential_moving_averages(self.network.state_dict(),
-                                                        self.diffusion_config.ema)
+            self.ema_network.ema(self.network.state_dict(), self.diffusion_config.ema)
 
         return {i:j.cpu().detach().numpy() for i,j in log.items()}
         
@@ -295,17 +294,18 @@ class ElucidatingDiffusion(Solvers):
         # mix the images with noises accordingly
         noisy_images = images + noises
 
+        # scaled target
+        scaled_target = (images-c_skip*noisy_images)/c_out
+
         with T.autocast(device_type=self.device, dtype=T.float16):
             # predict noise component and calculate the image component using it
             pred_images = network(c_input*noisy_images,sigma_noise, ctxt=ctxt, mask=mask)
-            assert pred_images.dtype is T.float16
+            # assert pred_images.dtype is T.float16
 
-            # scaled target
-            scaled_target = (images-c_skip*noisy_images)/c_out
             
             # loss function
             loss = self.loss(pred_images[mask],scaled_target[mask].to(self.device))
-            assert loss.dtype is T.float32
+            # assert loss.dtype is T.float32
 
         return {"noise_loss":loss}
 
@@ -328,8 +328,7 @@ class ElucidatingDiffusion(Solvers):
 
         # track the exponential moving averages of weights
         with T.no_grad():
-            self.ema_network.exponential_moving_averages(self.network.state_dict(),
-                                                        self.diffusion_config.ema)
+            self.ema_network.ema(self.network.state_dict(),self.diffusion_config.ema)
 
         return {i:j.cpu().detach().numpy() for i,j in log.items()}
 

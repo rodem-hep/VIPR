@@ -30,13 +30,15 @@ self_attention_cfg:
   attn_below: 8
   device: ${device}
   attn_heads: 16
-  pos_encode_kwargs:
-    embedding_max_frequency : ${...embedding_max_frequency}
+  trainable_pe: true
+  pos_encode_kwargs: null
+  #   embedding_max_frequency : ${...embedding_max_frequency}
 
 # cross attention as gates to residual connection
 cross_attention_cfg:
   attn_below: 16
   device: ${device}
   attn_heads: 16
-  pos_encode_kwargs:
-    embedding_max_frequency : ${...embedding_max_frequency}
+  trainable_pe: true
+  pos_encode_kwargs: null
+    # embedding_max_frequency : ${...embedding_max_frequency}

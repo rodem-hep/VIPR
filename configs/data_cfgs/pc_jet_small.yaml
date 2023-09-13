@@ -1,3 +1,5 @@
+data_name: jet
+
 train:
   _target_: src.physics.JetPhysics
   _convert_: object
@@ -7,6 +9,5 @@ train:
   target_names: ['eta', 'phi', 'pt']
   jet_scalars_cols: ["eta", "phi", "pt", "mass"]
 
-  data_name: jet
 
   noise_to_pileup: 0.0

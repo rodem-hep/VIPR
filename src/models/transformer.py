@@ -32,13 +32,19 @@ class PCMLP(nn.Module):
 
         for _ in range(n_layers-1):
             self.layers.append(nn.Linear(in_features, in_features))
-            self.layers.append(activation_functions(act_str.casefold()))
+            if act_str is not None:
+                self.layers.append(activation_functions(act_str.casefold()))
         self.layers.append(nn.Linear(in_features, out_features))
-        self.layers.append(activation_functions(act_str.casefold()))
+        if act_str is not None:
+            self.layers.append(activation_functions(act_str.casefold()))
         
         if zeroed:
-            self.layers[-2].weight.data.fill_(0.00)
-            self.layers[-2].bias.data.fill_(0.00)
+            if act_str is not None:
+                self.layers[-2].weight.data.fill_(0.00)
+                self.layers[-2].bias.data.fill_(0.00)
+            else:
+                self.layers[-1].weight.data.fill_(0.00)
+                self.layers[-1].bias.data.fill_(0.00)
 
     def forward(self, input):
         if self.skip_cnt:
@@ -214,7 +220,7 @@ class MultiHeadAttention(nn.Module):
                  mask_vk: T.Tensor=None, mask_q: T.Tensor=None,
                  attn_mask: T.Tensor=None
                  ) -> T.Tensor:
-        q_orig = q.clone()
+        # q_orig = q.clone()
 
         batch_size = q.shape[0]
         
@@ -224,22 +230,23 @@ class MultiHeadAttention(nn.Module):
             # B x n_heads x L x S
             attn_mask = attn_mask.unsqueeze(1).repeat(1,self.attn_heads,1,1)
 
-        # Project using the learnable layers: B, model_dim/features, HxW/point-cloud
+        # Project using the learnable layers: B, HxW/point-cloud, model_dim/features
         q = self.W_query(q)
         k = self.W_key(k)
         v = self.W_value(v)
 
         # Break (model_dim or features = num_heads x channels_per_head) for the different heads
-        shape = (batch_size, self.attn_heads, self.depth_vk_blk, -1)
+        # B, HxW/point-cloud, num_heads, channels_per_head/features
+        shape = (batch_size, -1, self.attn_heads, self.depth_vk_blk)
         q = q.view(shape)
-        k = k.view(shape) # B, num_heads, channels_per_head/features, HxW/point-cloud
+        k = k.view(shape)
         v = v.view(shape)
 
         # Permute for the attention to apply each head independantly
         # B, num_heads, HxW, channels_per_head/features
-        q = q.transpose(-1, -2).contiguous()
-        k = k.transpose(-1, -2).contiguous()
-        v = v.transpose(-1, -2).contiguous()
+        q = q.transpose(1, -2).contiguous()
+        k = k.transpose(1, -2).contiguous()
+        v = v.transpose(1, -2).contiguous()
 
         # Now we can apply the attention operation
         a_out = T.nn.functional.scaled_dot_product_attention(q, k, v,
@@ -247,7 +254,7 @@ class MultiHeadAttention(nn.Module):
                                                              )
 
         # Concatenate the all of the heads together to get back to: B, model_dim/features, HxW
-        a_out = a_out.transpose(-3, -2).contiguous().view(batch_size, -1, self.depth_vk)
+        a_out = a_out.transpose(1, -2).contiguous().view(batch_size, -1, self.depth_vk)
 
         # Pass through the final 1x1 convolution layer: B, q_dim, HxW
         return self.out_proj(a_out)
@@ -258,9 +265,10 @@ class MultiHeadGateAttention(MultiHeadAttention):
                  pos_encode_kwargs, attn_heads=4, device="cuda", **kwargs):
         if np.any(image_shape_q[0] != image_shape_vk[0]):
             raise ValueError("Image dimension between q and vk has to be the same")
+        super().__init__(depth_q=depth_vk, depth_vk=depth_vk,
+                         image_shape_q=image_shape_q, image_shape_vk=image_shape_vk,
+                         pos_encode_kwargs=pos_encode_kwargs, attn_heads=attn_heads, device=device, **kwargs)
         self.original_depth_q=depth_q
-        super().__init__(depth_vk, depth_vk, image_shape_q, image_shape_vk,
-                         pos_encode_kwargs, attn_heads, device, **kwargs)
         
         self.values_conv = nn.Sequential(nn.Conv2d(self.depth_vk, self.depth_vk, kernel_size=1),
                                   nn.BatchNorm2d(self.depth_vk),
@@ -440,7 +448,7 @@ class PerceiverBlock(nn.Module):
         self.n_processes=n_processes
         self.attn_heads=attn_heads
         self.device = device
-        self.film_cfg=film_cfg if film_cfg!=None else {}
+        self.film_cfg=film_cfg
         self.mlp_cfg=mlp_cfg if mlp_cfg!=None else {}
         # Layers
         self.film_layer = None
@@ -520,36 +528,39 @@ class PerceiverBlock(nn.Module):
         latent_ten = self.encode_layer(norm_input_arr, norm_input_arr,
                                         latent_ten,
                                         mask_vk=input_mask,
-                                        )+latent_ten
+                                        )#+latent_ten
 
         #ctxt from FiLM
         if self.film_layer is not None:
             FiLM_para = next(self.film_layer)
-            latent_vals =  FiLM_para[:,0:1]*latent_ten+FiLM_para[:,1:2]
+            latent_ten =  FiLM_para[:,0:1]*latent_ten+FiLM_para[:,1:2]
 
         # l-norm + MLP + residual connection
-        latent_ten = self.post_init_query_mlp(latent_vals)
+        latent_ten = self.post_init_query_mlp(latent_ten)
         
         ### Processor (self attn)
         for nr_layer in range(self.n_processes):
 
             if self.film_layer is not None:
                 FiLM_para = next(self.film_layer)
-                latent_vals =  FiLM_para[:,0:1]*latent_vals+FiLM_para[:,1:2]
+                latent_vals =  FiLM_para[:,0:1]*latent_ten+FiLM_para[:,1:2]
 
-            latent_vals = self.pre_mlp_norms[nr_layer](latent_ten)
+            latent_vals = self.pre_mlp_norms[nr_layer](latent_vals)
             latent_ten = self.processing_layers[nr_layer](latent_vals,
                                                            latent_vals,
                                                            latent_vals)+latent_ten
 
-            latent_ten = self.mlp_processing_layers[nr_layer](latent_vals
-                )
+            latent_ten = self.mlp_processing_layers[nr_layer](latent_ten)
             
         ### Decoder cross attn
+        # norm both pc
         norm_out_arr = self.init_out_query(output_arr)
         latent_ten = self.post_self_attn_norm(latent_ten)
+
         # TODO should this use mask_q=output_mask ?
-        output = self.decode_layer(latent_ten, latent_ten, norm_out_arr)
+        output = self.decode_layer(latent_ten, latent_ten, norm_out_arr,
+                                #    mask_q=output_mask
+                                   )
 
         # skip connection
         return self.last_query_mlp(output)+output_arr

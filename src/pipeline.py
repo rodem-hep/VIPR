@@ -21,59 +21,109 @@ from src.physics import JetPhysics
 import hydra
 
 class DataModule:
-    def __init__(self, *,
-                 train_set: partial, test_set: partial,
-                 loader_config: Mapping, img_enc:partial=None,
-                 run_img_enc_test:bool=True
-                 ):
 
-        self.img_enc=img_enc
-        self.loader_config = loader_config
-        self.train_sample=train_set()
-        self.test_sample=test_set()
-        self.run_img_enc_test=run_img_enc_test
+    # def __init__(self, *, data: partial, loader_config: Mapping,
+    #              img_enc:partial=None,
+    #              ):
 
-        if img_enc is not None:
-            self._img_enc = self.img_enc
+    #     self.img_enc=img_enc
+    #     self.loader_config = loader_config
+    #     self.data=data()
 
-    def _img_enc(self, dataloader):
-        return dataloader
+    #     if img_enc is not None:
+    #         self._img_enc = self.img_enc
 
-    def train_dataloader(self) -> DataLoader:
-        return self._img_enc(DataLoader(self.train_sample, **self.loader_config))
-        # return DataLoader(self.train_sample, **self.loader_config)
-
-    def test_dataloader(self) -> DataLoader:
-        test_config = deepcopy(self.loader_config)
-        test_config["drop_last"] = False
-        test_config["shuffle"] = False
-        if self.run_img_enc_test:
-            return self._img_enc(DataLoader(self.test_sample, **test_config))
-        else:
-            return DataLoader(self.test_sample, **test_config)
+    #     self.init_data()
         
-class ImageModule(Dataset):
-    def __init__(self, data, img_enhancement=None):
-        self.data=data
-        self.img_enhancement=img_enhancement
-        self._iter = 0
+    def init_data(self):
+        dataloader = iter(self.train_dataloader())
+        self.test_data={}
+        for i in range(10):
+            i = next(dataloader)
+            for j,k in i.items():
+                if isinstance(k, dict):
+                    if j not in self.test_data:
+                        self.test_data[j] = {} if isinstance(k, dict) else []
+                    for l,o in k.items():
+                        if l not in self.test_data[j]:
+                            self.test_data[j][l] = o
+                        else:
+                            self.test_data[j][l] = np.concatenate([self.test_data[j][l], o])
+                else:
+                    if j not in self.test_data:
+                        self.test_data[j] = k
+                    else:
+                        self.test_data[j] = np.concatenate([self.test_data[j], k])
+                    
+        # for i in range(512):
+        #     data.append(next(dataloader)[0][None])
+        self.mean["images"] = T.tensor(self.test_data["images"].mean((0,2,3))).float()
+        self.std["images"] = T.tensor(self.test_data["images"].std((0,2,3))).float()
 
+        
     def __len__(self):
         return len(self.data)
     
     def _shape(self):
-        raise ValueError("not implemented yet")
-        return self.sample.shape[1:]
+        shape={}
+        for i,j in self.test_data.items():
+            if isinstance(j, dict):
+                shape[i]={}     
+                for k,l in j.items():
+                    shape[i][k]=l.shape[1:]
+            else:
+                shape[i]=j.shape[1:]
+        return shape
+    
+    def get_ctxt_shape(self):
+        return {}
+
+    def get_normed_ctxt(self):
+        return 
+
+class ImageModule(DataModule, Dataset):
+    def __init__(self, data: partial, img_enc:partial=None, loader_config=None):
+        self.img_enc = img_enc
+        self._iter = 0
+        self.loader_config=loader_config
+        self.mean, self.std = {}, {}
+        
+        self.dataset = DataLoader(data,**self.loader_config)
+        self.init_data()
+        
+    def _img_enc(self, dataloader):
+        return dataloader
+
+    def train_dataloader(self):
+        return self
+
+    def test_dataloader(self):
+        return self.train_dataloader()
+
+    # def __len__(self):
+    #     return len(self.dataset)
+
+    # def __getitem__(self, index):
+    #     # image = self.dataset[idx]
+    #     self._iter+=1
+    #     print(self._iter)
+    #     for image, _ in self.dataset:
+    #         if self.img_enc is not None:
+    #             yield {"images":image, "ctxt": {"images": self.img_enc(image.clone())}}
+    #         else:
+    #             yield {"images":image}
+                
+        
 
     def __iter__(self):
-        # image = self.data[idx]
+        # image = self.dataset[idx]
         self._iter+=1
         print(self._iter)
-        for image, _ in self.data:
-            if self.img_enhancement is not None:
-                yield image, self.img_enhancement(image.clone())
+        for image, _ in self.dataset:
+            if self.img_enc is not None:
+                yield {"images":image, "ctxt": {"images": self.img_enc(image.clone())}}
             else:
-                yield image, None
+                yield {"images":image}
                 
 class PointCloudModule:
     def __init__(self, *, train_path, test_path, standardize_bool, loader_config,
@@ -263,7 +313,7 @@ def generate_gaussian_noise(shape:list, datatype:str,
         
         return DataLoader(
             PCLoader(T.randn(tuple([size]+shape)).numpy(),mask,ctxt=eval_ctxt),
-            batch_size=128, num_workers=4)
+            batch_size=32, num_workers=8)
 
 if __name__ == "__main__":
     # %matplotlib widget
@@ -292,7 +342,7 @@ if __name__ == "__main__":
         _, ax = plt.subplots(1,4, figsize=figsize)
         for a, img in zip(ax, i):
             a.imshow(img, **style)
-    elif True: # testing shapenet pc
+    elif False: # testing shapenet pc
         import h5py
         h5_file = h5py.File("/home/users/a/algren/scratch/diffusion/shapenet/shapenet.hdf5")
         data= {i:[] for i in ["train", "test", "val"]}

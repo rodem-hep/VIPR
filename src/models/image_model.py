@@ -97,7 +97,7 @@ class UNet(nn.Module):
         
         ## FiLM context
         if self._use_film:
-            self.film = FiLM(self.embedding_dims+self.ctxt_dims, self.channels[1:],
+            self.film = FiLM(self.embedding_dims+self.ctxt_dims.get("images", 0), self.channels[1:],
                              dense_config=self.film_config, device=self.device)
         else: # dummy film
             self.film = iter([None for i in range(1000)])

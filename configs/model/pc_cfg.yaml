@@ -10,29 +10,29 @@ ctxt_dims: null
 # network scaling
 embedding_dims: 32
 upscale_dims: 128
-n_encoders: 4
+n_encoders: 1
 attn_heads: 16
 
 mlp_cfg:
-  act_str: leakyrelu
-  n_layers: 2
+  act_str: gelu
+  n_layers: 1
   norm: layer
 
-pcivr_cfg:
-  input_query_dims: ${..upscale_dims}
-  output_query_dims:  ${.input_query_dims}
-  latent_dims: [16, 64] # n_cons x features
-  n_processes: 1
-  attn_heads: ${..attn_heads}
+# pcivr_cfg:
+#   input_query_dims: ${..upscale_dims}
+#   output_query_dims:  ${.input_query_dims}
+#   latent_dims: [16, 64] # n_cons x features
+#   n_processes: 0
+#   attn_heads: ${..attn_heads}
 
-  film_cfg:
-    ctxt_size: ${...embedding_dims}
-    use_on_image: false
-    dense_config:
-      n_neurons: 512
-      n_layers: 2
-      activation_str: leakyrelu
-      batchnorm: true
-      device: ${device}
+#   film_cfg:
+#     ctxt_size: ${...embedding_dims}
+#     use_on_image: false
+#     dense_config:
+#       n_neurons: 512
+#       n_layers: 4
+#       activation_str: gelu
+#       batchnorm: true
+#       device: ${device}
   
-  mlp_cfg: ${..mlp_cfg}
+#   mlp_cfg: ${..mlp_cfg}

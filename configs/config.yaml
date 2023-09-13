@@ -7,8 +7,8 @@ hydra:
 defaults:
   - _self_
   - diffusion_cfg: default.yaml
-  - model: pc_cfg.yaml
   
+  - model: pc_cfg.yaml
   # - data_cfgs: pc_jet.yaml
   - data_cfgs: pc_top_jet.yaml
   - eval: jet.yaml
@@ -18,6 +18,7 @@ defaults:
   
   # - data_cfgs: pc_shapenet.yaml
   
+  # - eval: default.yaml
   # - model: unet_cfg.yaml
   # - data_cfgs: animals.yaml
 
@@ -26,19 +27,18 @@ save_path: ${path}/${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
 device: cuda
 
 wandb:
-  project: pc-${..data_cfgs.train.data_name}-diffusion
+  project: pc-${..data_cfgs.data_name}-diffusion
   entity: malteal
   mode: online # online offline
-  name: ${..data_cfgs.train.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+  name: ${..data_cfgs.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
 
 data_cfgs:
   standardize_bool: False
   loader_config:
     pin_memory: true
-    batch_size: 256
-    num_workers: 16
-    # drop_last: True
-    shuffle: true
-    # prefetch_factor: 2
-    # persistent_workers: True
-    pin_memory_device: ${device}
+    batch_size: 512
+    num_workers: 8
+    shuffle: false
+    prefetch_factor: ${data_cfgs.loader_config.num_workers}
+    # pin_memory_device: ${device}
+    persistent_workers: False

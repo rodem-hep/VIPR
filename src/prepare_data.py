@@ -65,10 +65,11 @@ def prepare_shapenet(h5_file):
     raise TypeError("data shape should be changed and mean/std")
     return np.float32(data), mask, data.shape[-1], mean, std, len(data)
 
-def matrix_to_point_cloud(sample, idx_numbers):
+def matrix_to_point_cloud(sample, idx_numbers, num_per_event_max=None):
     "sample: n_features x pc"
     n_pc, num_per_event = np.unique(idx_numbers, return_counts=True)
-
+    if num_per_event_max is None:
+        num_per_event_max= num_per_event.max()
     n_events = len(n_pc)
     # max_cnstits = np.max(max_cnstits)
 
@@ -78,11 +79,11 @@ def matrix_to_point_cloud(sample, idx_numbers):
     # num_csts = num_per_event.sum()
     # x = T.randn(len(sample), 3)
 
-    mask = np.arange(0, num_per_event.max())
+    mask = np.arange(0, num_per_event_max)
     mask = np.expand_dims(mask, 0)
     mask = mask < np.expand_dims(num_per_event,1)
 
-    padded_tens = np.ones((n_events, num_per_event.max(), sample.shape[1]))*-1
+    padded_tens = np.ones((n_events, num_per_event_max, sample.shape[1]))*-1
     padded_tens[mask] = sample
     return padded_tens, mask
 

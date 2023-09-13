@@ -39,7 +39,7 @@ class TransformerEncoder(nn.Module):
         if self.embedding_dims!=0:
             self.embedding = pe.FourierFeatures(1, self.embedding_dims)
             # self.embedding = pe.sinusoidal(self.embedding_dims,
-            #                                embedding_min_frequency=1e-5,
+            #                                embedding_min_frequency=0.002,
             #                                embedding_max_frequency=80)
 
         self.init_conv = PCMLP(self.vkq_dims+self.embedding_dims,
@@ -53,11 +53,12 @@ class TransformerEncoder(nn.Module):
                                 skip_cnt=False)
             
         
-        if "film_cfg" in self.pcivr_cfg:
+        if self.pcivr_cfg is not None:
             if isinstance(self.ctxt_dims, int):
                 raise TypeError("ctxt_dims has to be a dict. "+
                                 "Keyname for FiLM is scalars")
-            self.pcivr_cfg["film_cfg"]["ctxt_size"]+=self.ctxt_dims.get("scalars", 0)
+            elif "film_cfg" in self.pcivr_cfg:
+                self.pcivr_cfg["film_cfg"]["ctxt_size"]+=self.ctxt_dims.get("scalars", 0)
         
         for _ in range(self.n_encoders):
             if self.pcivr_cfg is not None:
@@ -73,10 +74,10 @@ class TransformerEncoder(nn.Module):
                                      **self.mlp_cfg)
 
         self.last_conv = PCMLP(self.vkq_dims,self.vkq_dims, n_layers=1, zeroed=True,
-                               skip_cnt=False)
+                               skip_cnt=False, act_str=None)
 
     @T.no_grad()
-    def exponential_moving_averages(self, state_dict, ema_ratio):
+    def ema(self, state_dict, ema_ratio):
         ema_state_dict = self.state_dict()
         for (key, weight), (em_key, ema_para) in zip(state_dict.items(),
                                                      ema_state_dict.items()):
@@ -106,13 +107,14 @@ class TransformerEncoder(nn.Module):
             # concat noise_timestamp and inputs_vkq
             input_vkq = T.concat(
                 [input_vkq, 
-                 noise_variances.expand(len(noise_variances), input_vkq.shape[1], 
+                 noise_variances.expand(len(noise_variances), input_vkq.shape[1],
                                         noise_variances.shape[-1])],
                  -1
                 )
+            # concat noise_timestamp and ctxt cnts
             if "cnts" in ctxt:
                 ctxt["cnts"] = T.concat(
-                    [ctxt["cnts"].to(self.device),
+                    [ctxt["cnts"].clone().to(self.device),
                     noise_variances.expand(len(noise_variances), ctxt["cnts"].shape[1],
                                             noise_variances.shape[-1])],
                     -1
@@ -140,19 +142,24 @@ class TransformerEncoder(nn.Module):
             
         # transformers
         for nr in range(self.n_encoders):
-            # input_vkq_attn = self.trans_encoder_layers[nr](input_vkq, input_vkq,
-            #                                                input_vkq, mask)
             # if "cnts" in ctxt:
             #     output_vkq  =  self.trans_encoder_layers[nr](input_ctxt,
             #                                                 ctxt["mask"].to(self.device),
             #                                                 input_vkq, mask.to(self.device),
             #                                                 scalar_ctxt=ctxt["scalars"])
-            input_vkq  =  self.trans_encoder_layers[nr](input_ctxt, ctxt_mask,
-                                                         input_vkq, mask,
-                                                         scalar_ctxt=ctxt["scalars"])
+            if self.pcivr_cfg is not None:
+                input_vkq = self.trans_encoder_layers[nr](input_ctxt, ctxt_mask,
+                                                            input_vkq, mask,
+                                                            scalar_ctxt=ctxt["scalars"])
+            else:
+                input_vkq = self.trans_encoder_layers[nr](input_ctxt, input_ctxt,
+                                                               input_vkq, mask_vk=ctxt_mask,
+                                                            #    mask_q=mask
+                                                               )
             # input_vkq = input_vkq_attn+self.mlp_layers[nr](input_vkq_attn)
 
         # output skip connection and ffc
         # return self.downscale_conv(input_vkq)+original_input
+        # return self.last_conv(self.downscale_conv(input_ctxt)) #+original_input)
         return self.last_conv(self.downscale_conv(input_vkq)+original_input)
 
