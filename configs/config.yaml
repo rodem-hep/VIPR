@@ -29,7 +29,7 @@ device: cuda
 wandb:
   project: pc-${..data_cfgs.data_name}-diffusion
   entity: malteal
-  mode: online # online offline
+  mode: offline # online offline
   name: ${..data_cfgs.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
 
 data_cfgs:

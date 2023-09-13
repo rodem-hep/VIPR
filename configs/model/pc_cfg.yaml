@@ -11,11 +11,11 @@ ctxt_dims: null
 embedding_dims: 32
 upscale_dims: 128
 n_encoders: 1
-attn_heads: 16
+attn_heads: 8
 
 mlp_cfg:
   act_str: gelu
-  n_layers: 1
+  n_layers: 2
   norm: layer
 
 # pcivr_cfg:

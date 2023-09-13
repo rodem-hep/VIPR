@@ -23,8 +23,8 @@ from src.utils import fig2img
 import src.pipeline as pl
 
 class DiffusionModel(
-    ds.UniformDiffusion
-    # ds.ElucidatingDiffusion
+    # ds.UniformDiffusion
+    ds.ElucidatingDiffusion
     ):
     def __init__(self, diffusion_config, network, save_path,
                  train_loader, test_loader, wandb=None, device="cuda",
@@ -288,7 +288,8 @@ def main(config):
     train_loader = hydra.utils.instantiate(config.data_cfgs.train,
                                            loader_config=config.data_cfgs.loader_config)
     test_loader = hydra.utils.instantiate(config.data_cfgs.valid,
-                                          loader_config=config.data_cfgs.loader_config)
+                                          loader_config=config.data_cfgs.loader_config,
+                                          max_cnstits=train_loader.max_cnstits)
 
     #dataloader
     if "Jet" in test_loader.__str__():

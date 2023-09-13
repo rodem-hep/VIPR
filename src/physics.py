@@ -330,12 +330,14 @@ class JetPhysics(EvaluateFramework, Dataset):
             data["ctxt"] = {}
             
             # add pileup and recalculate jet vars
-            event, mask, jet_data = self.concat_pileup(idx,
-                                             cnts_vars=self.cnts_vars[idx][:,self.col_cnts_bool],
-                                             mask_cnts_vars=self.mask_cnts[idx])
-            # jet_data = self.jet_vars.iloc[idx:idx+1]
-            # mask = self.mask_cnts[idx]
-            # event = self.relative_pos(self.cnts_vars[idx][None],jet_data)[0]
+            if False:
+                event, mask, jet_data = self.concat_pileup(idx,
+                                                cnts_vars=self.cnts_vars[idx],
+                                                mask_cnts_vars=self.mask_cnts[idx])
+            else:
+                jet_data = self.jet_vars.iloc[idx:idx+1]
+                mask = self.mask_cnts[idx]
+                event = self.relative_pos(self.cnts_vars[idx][None],jet_data)[0]
 
             # add data to dict
             data["images"] = self.relative_pos(self.cnts_vars[idx][None],jet_data)[0]
@@ -614,32 +616,43 @@ if __name__ == "__main__":
             multi_data = {"images":[], "scalars":[], "images_ctxt":[], "mask": [],
                           "mask_ctxt": []}
             for i in tqdm(dataloader):
-                multi_data["images"].append(i["ctxt"]["cnts"])
-                multi_data["images_ctxt"].append(i["images"])
-                multi_data["mask"].append(i["ctxt"]["mask"])
-                multi_data["mask_ctxt"].append(i["mask"])
+                multi_data["images"].append(i["images"])
+                multi_data["mask"].append(i["mask"])
+                
+                multi_data["images_ctxt"].append(i["ctxt"]["cnts"])
+                multi_data["mask_ctxt"].append(i["ctxt"]["mask"])
+                
                 multi_data["scalars"].append(i["ctxt"]["scalars"])
+                
         for i in multi_data:
             multi_data[i] = T.concat(multi_data[i], 0).numpy()
         # Combine image channels for each variable
+        bounds = [[-2.6, 2.6], [-2.6, 2.6]]
+        bins = 30
+        nr = 2
+        for i,j in [["images", "mask"], ["images_ctxt", "mask_ctxt"]]:
+            plt.figure(figsize=(8*1.5,6*1.5))
+            cnts = multi_data[i][nr][multi_data[j][nr]]
+            print(f"Tracks: {multi_data[j][nr].sum()}")
+            plt.hist2d(
+                x=cnts[..., 0],
+                y=cnts[..., 1],
+                weights=cnts[..., -1],
+                bins=bins,
+                range=bounds,
+            )
+            plt.xlabel(r"$\Delta \eta$", fontsize=15)
+            plt.ylabel(r"$\Delta \phi$", fontsize=15)
+        # plt.figure()
+        # cnts = multi_data["images_ctxt"][nr][multi_data["mask_ctxt"][nr]]
+        # plt.hist2d(
+        #     x=cnts[..., 0],
+        #     y=cnts[..., 1],
+        #     weights=cnts[..., -1],
+        #     bins=bins,
+        #     range=bounds,
+        # )
         
-        cnts = multi_data["images"][0][multi_data["mask"][0]]
-        plt.hist2d(
-            x=cnts[..., 0],
-            y=cnts[..., 1],
-            weights=cnts[..., -1],
-            bins=20,
-            # range=[x_bounds, y_bounds],
-        )
-        
-        cnts = multi_data["images_ctxt"][0][multi_data["mask_ctxt"][0]]
-        plt.hist2d(
-            x=cnts[..., 0],
-            y=cnts[..., 1],
-            weights=cnts[..., -1],
-            bins=20,
-            # range=[x_bounds, y_bounds],
-        )
         # # generate events with pileup
         # idx_jet = 0
         # events_with_pileup, mask = physics.concat_pileup(0)

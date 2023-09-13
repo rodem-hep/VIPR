@@ -25,26 +25,33 @@ class PCMLP(nn.Module):
             self.skip_cnt=False
         self.layers = nn.Sequential()
         
-        if ("layer" in norm) & (norm_args is not None):
-            self.layers.append(nn.LayerNorm(**self.norm_args))
-        elif ("batch" in norm) & (norm_args is not None):
-            self.layers.append(nn.BatchNorm1d(**self.norm_args))
 
         for _ in range(n_layers-1):
+            #add norm
+            if ("layer" in norm) & (norm_args is not None):
+                self.layers.append(nn.LayerNorm(**self.norm_args))
+            elif ("batch" in norm) & (norm_args is not None):
+                self.layers.append(nn.BatchNorm1d(**self.norm_args))
+                
+            #add linear
             self.layers.append(nn.Linear(in_features, in_features))
+            
+            #add acti function
             if act_str is not None:
                 self.layers.append(activation_functions(act_str.casefold()))
+
+        # last linear
         self.layers.append(nn.Linear(in_features, out_features))
-        if act_str is not None:
-            self.layers.append(activation_functions(act_str.casefold()))
+        # if act_str is not None:
+        #     self.layers.append(activation_functions(act_str.casefold()))
         
         if zeroed:
-            if act_str is not None:
-                self.layers[-2].weight.data.fill_(0.00)
-                self.layers[-2].bias.data.fill_(0.00)
-            else:
-                self.layers[-1].weight.data.fill_(0.00)
-                self.layers[-1].bias.data.fill_(0.00)
+            # if act_str is not None:
+            #     self.layers[-2].weight.data.fill_(0.00)
+            #     self.layers[-2].bias.data.fill_(0.00)
+            # else:
+            self.layers[-1].weight.data.fill_(0.00)
+            self.layers[-1].bias.data.fill_(0.00)
 
     def forward(self, input):
         if self.skip_cnt:
@@ -164,22 +171,19 @@ class MultiHeadAttention(nn.Module):
 
         # attention
         self.W_query = nn.Sequential(
-            # nn.BatchNorm1d(self.depth_q),
             nn.Linear(self.depth_q, self.depth_vk),
             )
 
         self.W_key = nn.Sequential(
-            # nn.BatchNorm1d(self.depth_vk),
             nn.Linear(self.depth_vk, self.depth_vk),
             )
 
         self.W_value = nn.Sequential(
-            # nn.BatchNorm1d(self.depth_vk),
             nn.Linear(self.depth_vk, self.depth_vk),
             )
         
         self.out_proj = nn.Sequential(
-            # nn.BatchNorm1d(self.depth_vk),
+            nn.LayerNorm(self.depth_vk),
             nn.Linear(self.depth_vk, self.depth_q),
             )
         if self.zero_init:
@@ -468,8 +472,8 @@ class PerceiverBlock(nn.Module):
         self.latent_arr = T.nn.Parameter(T.randn(*self.latent_dims))
         self.latent_mask = T.full(self.latent_arr.shape, True)
         
-        self.init_in_query = nn.LayerNorm(self.input_query_dims)
-        self.init_out_query = nn.LayerNorm(self.output_query_dims)
+        self.in_query_norm = nn.LayerNorm(self.input_query_dims)
+        self.out_query_norm = nn.LayerNorm(self.output_query_dims)
         self.post_self_attn_norm = nn.LayerNorm(self.latent_dims[-1])
         
         ### Encoder
@@ -524,7 +528,7 @@ class PerceiverBlock(nn.Module):
         latent_ten = self.latent_arr.expand(len(input_arr),*self.latent_arr.shape)
         
         ### Encode input_arr to latent_ten size
-        norm_input_arr = self.init_in_query(input_arr)
+        norm_input_arr = self.in_query_norm(input_arr)
         latent_ten = self.encode_layer(norm_input_arr, norm_input_arr,
                                         latent_ten,
                                         mask_vk=input_mask,
@@ -551,11 +555,11 @@ class PerceiverBlock(nn.Module):
                                                            latent_vals)+latent_ten
 
             latent_ten = self.mlp_processing_layers[nr_layer](latent_ten)
+        latent_ten = self.post_self_attn_norm(latent_ten)
             
         ### Decoder cross attn
         # norm both pc
-        norm_out_arr = self.init_out_query(output_arr)
-        latent_ten = self.post_self_attn_norm(latent_ten)
+        norm_out_arr = self.out_query_norm(output_arr)
 
         # TODO should this use mask_q=output_mask ?
         output = self.decode_layer(latent_ten, latent_ten, norm_out_arr,

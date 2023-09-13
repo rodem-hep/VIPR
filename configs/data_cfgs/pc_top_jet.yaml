@@ -20,7 +20,7 @@ train:
   # if the pileup path in defined - it will use pileup path
   pileup_path: ["/home/users/a/algren/scratch/diffusion/pileup/pileup.csv", ]
 
-  max_cnstits: 300
+  # max_cnstits: 271
 
 valid:
   _target_: src.physics.JetPhysics
