@@ -1,4 +1,7 @@
 "Transformer"
+import pyrootutils
+root = pyrootutils.setup_root(search_from=__file__, pythonpath=True)
+
 import math
 import torch as T
 import torch.nn as nn
@@ -55,7 +58,7 @@ class DenseNetwork(nn.Module):
             self.layers[-1].weight.data.fill_(0.00)
             self.layers[-1].bias.data.fill_(0.00)
 
-    def forward(self, input, ctxt: T.Tensor | None = None):
+    def forward(self, input: T.Tensor, ctxt: Union[T.Tensor,None] = None):
         if ctxt is not None:
             if len(input.shape) != len(ctxt.shape):
                 ctxt = ctxt.view(*input.shape[:-1],ctxt.shape[-1])
@@ -113,7 +116,7 @@ class MultiHeadAttention(nn.Module):
     """ 
     def __init__(self, depth_q, depth_vk, image_shape_q=None, image_shape_vk=None,
                 pos_encode_kwargs=None, attn_heads=4, trainable_pe=False,
-                device="cuda", **kwargs):
+                device="cpu", **kwargs):
         super().__init__()
         # self.depth=depth
         self.device=device
@@ -282,8 +285,8 @@ class TransformerEncoderLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Mapping | None = None,
-        dense_cfg: Mapping | None = None,
+        mha_config: Union[Mapping,None] = None,
+        dense_cfg: Union[Mapping,None] = None,
         ctxt_dim: int = 0
         ):
         
@@ -307,8 +310,8 @@ class TransformerEncoderLayer(nn.Module):
         self,
         x: T.Tensor,
         mask: Optional[T.BoolTensor] = None,
-        ctxt: T.Tensor | None = None,
-        # attn_bias: T.Tensor | None = None,
+        ctxt: Union[T.Tensor,None] = None,
+        # attn_bias: Union[T.Tensor,None] = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass using residual connections and layer normalisation."""
@@ -336,8 +339,8 @@ class TransformerDecoderLayer(nn.Module):
     def __init__(
         self,
         model_dim: int,
-        mha_config: Mapping | None = None,
-        dense_cfg: Mapping | None = None,
+        mha_config: Union[Mapping,None] = None,
+        dense_cfg: Union[Mapping,None] = None,
         ctxt_dim: int = 0,
         init_self_attn: bool=False,
     ) -> None:
@@ -378,8 +381,8 @@ class TransformerDecoderLayer(nn.Module):
         kv_seq: T.Tensor,
         mask_q: Optional[T.BoolTensor] = None,
         mask_vk: Optional[T.BoolTensor] = None,
-        ctxt: T.Tensor | None = None,
-        attn_bias: T.Tensor | None = None,
+        ctxt: Union[T.Tensor,None] = None,
+        attn_bias: Union[T.Tensor,None] = None,
         attn_mask: Optional[T.BoolTensor] = None,
     ) -> T.Tensor:
         """Pass using residual connections and layer normalisation."""
@@ -446,10 +449,11 @@ class PerceiverLayer(nn.Module):
             self.processing_layers.append(TransformerEncoder(**self.process_cfg))
         
         ### decoder
-        self.decode_layer = TransformerDecoder(**self.decode_cfg)
+        if self.decode_cfg is not None:
+            self.decode_layer = TransformerDecoder(**self.decode_cfg)
 
-        self.last_query_mlp = DenseNetwork(self.latent_dim[-1],self.latent_dim[-1],
-                                         **self.dense_cfg)
+            self.last_query_mlp = DenseNetwork(self.latent_dim[-1],self.latent_dim[-1],
+                                            **self.dense_cfg)
 
         # film for context
         if (self.film_cfg is not None) & (self.n_processes>0):
@@ -483,12 +487,15 @@ class PerceiverLayer(nn.Module):
 
             latent_ten = self.processing_layers[nr_layer](latent_ten)
 
-        ### Decoder latent_ten to input_ten
-        output = self.decode_layer(input_ten, latent_ten)
+        if self.decode_cfg is not None:
+            ### Decoder latent_ten to input_ten
+            output = self.decode_layer(input_ten, latent_ten)
 
-        # skip connection
-        return output
-        # return self.last_query_mlp(output)+output_ten
+            # skip connection
+            return output
+            # return self.last_query_mlp(output)+output_ten
+        else:
+            return latent_ten
 
 
 ########### Blocks ###########
@@ -503,8 +510,8 @@ class TransformerEncoder(nn.Module):
         self,
         model_dim: int = 64,
         num_layers: int = 3,
-        mha_config: Mapping | None = None,
-        dense_cfg: Mapping | None = None,
+        mha_config: Union[Mapping,None] = None,
+        dense_cfg: Union[Mapping,None] = None,
         ctxt_dim: int = 0,
     ) -> None:
         """
@@ -542,8 +549,8 @@ class TransformerDecoder(nn.Module):
         self,
         model_dim: int,
         num_layers: int,
-        mha_config: Mapping | None = None,
-        dense_cfg: Mapping | None = None,
+        mha_config: Union[Mapping,None] = None,
+        dense_cfg: Union[Mapping,None] = None,
         ctxt_dim: int = 0,
         init_self_attn:bool = False,
     ) -> None:
@@ -582,8 +589,9 @@ class Perceiver(nn.Module):
 
     def __init__(
         self,
-        pcivr_cfg: Mapping | None,
+        pcivr_cfg: Union[Mapping,None],
         num_layers: int = 1,
+        device:str="cpu",
     ) -> None:
         """
         Args:
@@ -599,7 +607,9 @@ class Perceiver(nn.Module):
         )
         self.pcivr_cfg=pcivr_cfg
         self.num_layers=num_layers
+        self.device=device
 
+        self.to(self.device)
         # self.final_norm = nn.LayerNorm(model_dim)
 
     def forward(self, input_ten: T.Tensor, ctxt_ten: T.Tensor, **kwargs) -> T.Tensor:
@@ -609,10 +619,91 @@ class Perceiver(nn.Module):
         return input_ten
         # return self.final_norm(q_seq)
 
+class UPerceiver(nn.Module):
+    """A stack of N transformer dencoder layers followed by a final normalisation step.
+
+    Sequence x Sequence -> Sequence
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        model_dim: int,
+        max_cnts: int,
+        cnts_sizes: List[int],
+        pcivr_cfg: Mapping,
+        device:str="cpu",
+    ) -> None:
+        """
+        Args:
+            pcivr_cfg: PerceiverLayer config
+            num_layers: Number of encoder layers used
+        """
+        super().__init__()
+        self.input_dim=input_dim
+        self.model_dim=model_dim
+        self.cnts_sizes=cnts_sizes
+        self.max_cnts=max_cnts
+        self.pcivr_cfg=pcivr_cfg
+        self.device=device
+
+        self.down_layers = nn.ModuleList([])
+        self.up_layers = nn.ModuleList([])
+        self.get_network()
+        
+    def get_network(self):
+        # scale features up/down
+        self.pre_dense = DenseNetwork(self.input_dim,self.model_dim,
+                                      **self.pcivr_cfg.dense_cfg)
+
+        self.post_dense = DenseNetwork(self.model_dim,self.input_dim,
+                                      **self.pcivr_cfg.dense_cfg)
+        # downscale
+        for cnts_per_layer in self.cnts_sizes:
+            pcivr_cfg_up = self.pcivr_cfg.copy()
+            pcivr_cfg_up["latent_dim"] = [cnts_per_layer, self.model_dim]
+            self.down_layers.append(PerceiverLayer(**pcivr_cfg_up))
+
+        # upscale
+        for cnts_per_layer in self.cnts_sizes[1::-1]+[self.max_cnts]:
+            pcivr_cfg_up = self.pcivr_cfg.copy()
+            pcivr_cfg_up["latent_dim"] = [cnts_per_layer, self.model_dim]
+            self.up_layers.append(PerceiverLayer(**pcivr_cfg_up))
+        self.to(self.device)
+
+        # self.final_norm = nn.LayerNorm(model_dim)
+
+    def forward(self, input_ten: T.Tensor, mask_vk: T.Tensor, **kwargs) -> T.Tensor:
+        """Pass the input through all layers sequentially."""
+        skip_features=[]
+        
+        # init dense to upscale features
+        input_ten = self.pre_dense(input_ten)
+
+        # downscale pc with cross attention with attn pooling
+        skip_features.append(input_ten.clone())
+        input_ten = self.down_layers[0](input_ten=kwargs.get("ctxt_ten", None),
+                                        ctxt_ten=input_ten, mask_vk=mask_vk, **kwargs)
+        for layer in self.down_layers[1:]:
+            skip_features.append(input_ten.clone())
+            input_ten = layer(input_ten=kwargs.get("ctxt_ten", None),
+                              ctxt_ten=input_ten, mask_vk=T.ones(*input_ten.shape[:-1])==1,
+                              **kwargs)
+
+        # upscale pc with cross attention with skip connections
+        skip_features = skip_features[::-1]
+        for layer in self.up_layers:
+            input_ten = layer(input_ten=skip_features.pop(),
+                              ctxt_ten=input_ten,
+                              mask_vk=T.ones(*input_ten.shape[:-1])==1, **kwargs)
+
+        # downscales features
+        input_ten = self.post_dense(input_ten)
+
+        return input_ten
 
 def test_get_data():
-    import hydra
-    config = misc.load_yaml("configs/data_cfg.yaml")
+    config = misc.load_yaml("configs/data_cfgs/data_cfg.yaml")
     data = hydra.utils.instantiate(config.train_set)
     
     dataloader = hydra.utils.instantiate(config.loader_cfg)(data)
@@ -632,32 +723,16 @@ def test_get_data():
     return data
 
 if __name__ == "__main__":
-    device="cuda"
-    data = test_get_data()
-    data = data[:4]
-
-
-    # data = T.randn((4,3, 16,16))
-    img_shape = list(data.shape[1:])
-    ViT = VisionTransformerLayer(img_shape=img_shape[1:],
-                                n_channels=img_shape[0],
-                                kernel_size=8,
-                                stride=4,
-                                device=device)
-    # ViT = T2TVisionTransformerLayer(in_channels=data.shape[1],
-    #                                 out_channels=1,
-    #                                 kernel_size=8,
-    #                                 stride=4,
-    #                                 device=device)
+    import hydra
+    model_cfg = misc.load_yaml("/home/malteal/local_work/diffusion/configs/model/u_perceiver_cfg.yaml")
+    max_cnts =200
+    UNet = UPerceiver(max_cnts=max_cnts, **model_cfg.trans_cfg)
     
-    output = ViT(data.to(device))
+    input_ten = T.randn(128, max_cnts, 3)
+    # ctxt_ten = T.randn(128, 64, 3)
+    
+    output_ten = UNet(input_ten, mask_vk=input_ten.sum(-1)>1)
+    
 
-    import matplotlib.pyplot as plt
-    style = {"vmax":1, "vmin":0}
 
-    index = 0
-    fig,ax = plt.subplots(1,2)
-    ax[0].imshow(data[index].permute(1, 2, 0).cpu().detach().numpy(), **style)
-    ax[1].imshow(output[index].permute(1, 2, 0).cpu().detach().numpy(), **style)
-    plt.axis("off")
 

@@ -221,6 +221,27 @@ class UNet(nn.Module):
 
     
 
+def test_get_data():
+    import hydra
+    config = misc.load_yaml("configs/data_cfg.yaml")
+    data = hydra.utils.instantiate(config.train_set)
+    
+    dataloader = hydra.utils.instantiate(config.loader_cfg)(data)
+    dataloader = hydra.utils.instantiate(config.img_enc)(dataloader)
+    #find std and mean of data
+    data=[]
+    data_ctxt=[]
+    for nr, i in enumerate(dataloader):
+        data.append(i[0] if len(i) else i)
+        if i[1] is not None:
+            data_ctxt.append(i[1] if len(i) else i)
+        if nr==1:
+            break
+    data=T.concat(data)
+    if data_ctxt[0] is not None:
+        data_ctxt=T.concat(data_ctxt)
+    return data
+
 if __name__ == "__main__":
     config = misc.load_yaml("configs/configs.yaml")
     input_shape = (config.image_size, config.image_size, 3)
@@ -228,3 +249,31 @@ if __name__ == "__main__":
     inputs = T.randn((1,3, 32,32))
     outputs = model(inputs)
     print(model.trainable_parameters())
+    device="cuda"
+    data = test_get_data()
+    data = data[:4]
+
+
+    # data = T.randn((4,3, 16,16))
+    img_shape = list(data.shape[1:])
+    ViT = VisionTransformerLayer(img_shape=img_shape[1:],
+                                n_channels=img_shape[0],
+                                kernel_size=8,
+                                stride=4,
+                                device=device)
+    # ViT = T2TVisionTransformerLayer(in_channels=data.shape[1],
+    #                                 out_channels=1,
+    #                                 kernel_size=8,
+    #                                 stride=4,
+    #                                 device=device)
+    
+    output = ViT(data.to(device))
+
+    import matplotlib.pyplot as plt
+    style = {"vmax":1, "vmin":0}
+
+    index = 0
+    fig,ax = plt.subplots(1,2)
+    ax[0].imshow(data[index].permute(1, 2, 0).cpu().detach().numpy(), **style)
+    ax[1].imshow(output[index].permute(1, 2, 0).cpu().detach().numpy(), **style)
+    plt.axis("off")
