@@ -170,8 +170,9 @@ class PCLoader(Dataset):
         self.mask=mask
         self.ctxt = ctxt
         self.run_norm=run_norm
-        self.mean = getattr(self, 'mean', np.zeros(self.sample.shape[-1],))
-        self.std = getattr(self, 'std', np.ones(self.sample.shape[-1],))
+        if self.run_norm:
+            self.mean = getattr(self, 'mean', np.zeros(self.sample.shape[-1],))
+            self.std = getattr(self, 'std', np.ones(self.sample.shape[-1],))
 
         if (ctxt is not None) & self.run_norm:
             self.ctxt_mean = getattr(self, 'ctxt_mean', np.zeros(self.ctxt.shape[-1],))
@@ -312,8 +313,9 @@ def generate_gaussian_noise(shape:list, datatype:str,
             mask[nr, :i] = True
         
         return DataLoader(
-            PCLoader(T.randn(tuple([size]+shape)).numpy(),mask,ctxt=eval_ctxt),
-            batch_size=32, num_workers=8)
+            PCLoader(T.randn(tuple([size]+shape)).numpy(),mask,ctxt=eval_ctxt,
+                     run_norm=False),
+            batch_size=128, num_workers=8)
 
 if __name__ == "__main__":
     # %matplotlib widget

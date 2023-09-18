@@ -1,10 +1,11 @@
 import matplotlib.pyplot as plt
+import copy
 import wandb
+import numpy as np
 
 #internal
 from src.utils import fig2img
 from tools.visualization import general_plotting as plot
-import copy
 
 class EvaluateFramework:
 
@@ -14,6 +15,9 @@ class EvaluateFramework:
             fig, (ax_1, ax_2) = plt.subplots(
                 2, 1, gridspec_kw={"height_ratios": [3, 1]}, figsize=(9, 5), sharex="col"
                 )
+            # if "pt" in name.lower():
+            #     data_col = np.log([d[:,nr] for d in args])
+            # else:
             data_col = [d[:,nr] for d in args]
             counts_dict, _ = plot.plot_hist(*data_col, ax=ax_1,normalise=True,
                                             **copy.deepcopy(hist_kwargs))

@@ -8,7 +8,7 @@ train:
   jet_path: /srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/path_lists.yaml
 
   sub_col: train
-  n_files: 1
+  n_files: null
   n_pileup_to_select: 100
 
   # variables used
@@ -20,14 +20,14 @@ train:
   # if the pileup path in defined - it will use pileup path
   pileup_path: ["/home/users/a/algren/scratch/diffusion/pileup/pileup.csv", ]
 
-  # max_cnstits: 271
+  max_cnstits: 400
 
 valid:
   _target_: src.physics.JetPhysics
   _convert_: object
 
   jet_path: ${..train.jet_path}
-  sub_col: valid
+  sub_col: train
   n_files: 1
   n_pileup_to_select: ${..train.n_pileup_to_select}
 

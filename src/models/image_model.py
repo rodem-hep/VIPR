@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 from tools import misc
 from tools.discriminator import DenseNet
 import src.positional_encoding as pe
-from src.models.transformer import (MultiHeadSelfAttention, MultiHeadGateAttention,
+from src.models.image_transformer import (MultiHeadSelfAttention, MultiHeadGateAttention,
                          VisionTransformerLayer)
 
 from src.models.modules import FiLM, Gate, ResidualBlock

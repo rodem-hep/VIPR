@@ -86,7 +86,7 @@ class JetPhysics(EvaluateFramework, Dataset):
         self.pileup_path=pileup_path
         self.target_names = target_names
         self.col_jets = [f"jet_{i}"for i in JET_COL]
-        self.hist_kwargs={"percentile_lst":[0, 99],
+        self.hist_kwargs={"percentile_lst":[0, 99.5],
                      "style": {"bins": 40, "histtype":"step"},
                      "dist_styles":[
                         {"marker":"o", "color":"black", "label":"Truth", "linewidth":0},
@@ -143,10 +143,10 @@ class JetPhysics(EvaluateFramework, Dataset):
             self.jet_norms = {"mean":self.jet_vars.mean(0), "std":self.jet_vars.std(0)}
 
         # only to calculate mean/std
-        cnts_vars_rel = self.relative_pos(
+        self.cnts_vars_rel = self.relative_pos(
             self.cnts_vars[..., self.col_cnts_bool].copy(),self.jet_vars)
 
-        self.mean["images"], self.std["images"] = self.calculate_norms(cnts_vars_rel,
+        self.mean["images"], self.std["images"] = self.calculate_norms(self.cnts_vars_rel,
                                                                     self.mask_cnts)
         
         # remove unused columns
@@ -193,8 +193,8 @@ class JetPhysics(EvaluateFramework, Dataset):
                     cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
                     cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
 
-            cnts_vars_rel[..., nr+1] = (np.exp(cnts_vars_rel[..., nr+1])
-                                        *jet_vars[..., nr+1][:,None])
+            cnts_vars_rel[..., nr+1] = np.exp(cnts_vars_rel[..., nr+1])-1
+            # cnts_vars_rel[..., nr+1] = cnts_vars_rel[..., nr+1]
         else:
 
             for nr, i in enumerate(['eta', 'phi']):
@@ -203,8 +203,10 @@ class JetPhysics(EvaluateFramework, Dataset):
                     cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
                     cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
 
-            cnts_vars_rel[..., nr+1] = np.log(cnts_vars_rel[..., nr+1]/
-                                              jet_vars["pt"].values[:,None])
+            cnts_vars_rel[..., nr+1] = np.log(cnts_vars_rel[..., nr+1]+1)
+            # cnts_vars_rel[..., nr+1] = np.log(cnts_vars_rel[..., nr+1]/#+1/
+            #                                   jet_vars["pt"].values[:,None]
+            #                                   )
             cnts_vars_rel[..., nr+1] = np.nan_to_num(cnts_vars_rel[..., nr+1], -1)
 
         return cnts_vars_rel
@@ -376,6 +378,12 @@ class JetPhysics(EvaluateFramework, Dataset):
             mask = mask.cpu().detach().numpy()
         # renorm
         if "scalars" in ctxt:
+            log = self.plot_marginals(((self.jet_vars[self.jet_scalars_cols].values[:len(ctxt["scalars"])]
+                                       -self.jet_norms["mean"][self.jet_scalars_cols].values)
+                                      /self.jet_norms["std"][self.jet_scalars_cols].values),
+                                    ctxt["scalars"],
+                                    col_name=[f"jet_normed_{i}" for i in self.jet_scalars_cols],
+                                    hist_kwargs=self.hist_kwargs, log=log)
             ctxt_scalars = (ctxt["scalars"]
                             *self.jet_norms["std"][self.jet_scalars_cols].values
                             +self.jet_norms["mean"][self.jet_scalars_cols].values)
@@ -387,7 +395,7 @@ class JetPhysics(EvaluateFramework, Dataset):
             gen_cnts_vars = self.relative_pos(gen_data, ctxt_scalars, reverse=True)
             generated_jet_vars = self.physics_properties(gen_cnts_vars, mask==1)
 
-            log = self.plot_marginals(self.jet_vars[self.jet_scalars_cols].values,
+            log = self.plot_marginals(self.jet_vars[self.jet_scalars_cols].values[:len(generated_jet_vars)],
                                     generated_jet_vars[self.jet_scalars_cols].values,
                                     col_name=[f"jet_{i}" for i in self.jet_scalars_cols],
                                     hist_kwargs=self.hist_kwargs, log=log)
@@ -397,6 +405,11 @@ class JetPhysics(EvaluateFramework, Dataset):
         log = self.plot_marginals(self.cnts_vars[self.mask_cnts][:len(gen_cnts_flatten)],
                                   gen_cnts_flatten,
                                   col_name=self.col_cnts[self.col_cnts_bool], log=log,
+                                  hist_kwargs=self.hist_kwargs)
+
+        log = self.plot_marginals(self.cnts_vars_rel[self.mask_cnts][:len(gen_cnts_flatten)],
+                                  gen_data[mask==1],
+                                  col_name=[f"{i}_rel" for i in self.col_cnts[self.col_cnts_bool]], log=log,
                                   hist_kwargs=self.hist_kwargs)
 
         return log
@@ -544,10 +557,9 @@ class MultiJetFiles(MultiStreamDataLoader):
         self.jet_physics_cfg.update(kwargs)
         self.dataset = JetPhysics(jet_path = data_list[:kwargs.get("n_valid_files", 4)],
                                   **self.jet_physics_cfg)
-        loader_config["num_workers"] = 8
+        loader_config["num_workers"] = 1
         super().__init__(datasets=datasets,
                          data_kw=loader_config)
-
 
     def _shape(self): # TODO to be removed
         return self.dataset._shape()

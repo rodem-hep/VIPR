@@ -1,14 +1,19 @@
 # diffusion
-eval_iters: 5
+eval_iters: 1
 n_diffusion_steps: 20
 min_signal_rate : 0.02
 max_signal_rate : 1.00
 
 # optimization
 ema : 0.999
-learning_rate : 1e-3
+learning_rate : 5e-4
 weight_decay : 1e-4
 num_epochs: 2000
+lr_scheduler:
+  sch_type: "warmup"
+  attr:
+    num_steps: 50_000
+
 
 # diffusion type
 super_res: False

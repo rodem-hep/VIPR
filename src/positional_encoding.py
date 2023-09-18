@@ -11,44 +11,59 @@ from tools import misc
 from tools.discriminator import DenseNet
 from src.utils import append_dims
 
-class sinusoidal:
+class Sinusoidal(nn.Module):
     def __init__(self,embedding_dims, embedding_min_frequency=1,
                  embedding_max_frequency=1000, img_shape=None, device="cuda"):
-        self.embedding_min_frequency = embedding_min_frequency
-        self.embedding_max_frequency=embedding_max_frequency
+        super().__init__()
         self.embedding_dims=embedding_dims
         self.device=device
         self.img_shape=img_shape
+        if not isinstance(embedding_min_frequency, T.Tensor):
+            embedding_min_frequency = T.tensor(embedding_min_frequency)
+            
+        if not isinstance(embedding_max_frequency, T.Tensor):
+            embedding_max_frequency = T.tensor(embedding_max_frequency)
+
+        self.register_buffer("min_value", embedding_min_frequency)
+        self.register_buffer("max_value", embedding_max_frequency)
+
         if img_shape is not None:
             self.create_embedding()
 
-        self.frequencies = T.exp(
-            T.linspace(
-                np.log(self.embedding_min_frequency),
-                np.log(self.embedding_max_frequency),
-                self.embedding_dims // 2, device=self.device
-            )
-        )
+        frequencies = T.arange(self.embedding_dims//2, device=self.device)
+        frequencies = T.exp(frequencies)
+        
+        self.register_buffer("frequencies", frequencies)
+        
 
+
+    # def sinusoidal_embedding(self,x):
+    #     angular_speeds = 2.0 * T.pi * self.frequencies
+    #     # if len(x.shape)>=3:
+    #     #     embeddings = T.concat(
+    #     #         [T.sin(angular_speeds * x),
+    #     #         T.cos(angular_speeds * x)],
+    #     #         axis=3
+    #     #     )
+    #     #     embeddings = embeddings.reshape(x.shape[0],self.embedding_dims,1,1)
+    #     # else:
+    #     embeddings = T.concat(
+    #         [T.sin(angular_speeds * x),
+    #         T.cos(angular_speeds * x)], axis=-1
+    #     )
+    #     return embeddings
     def sinusoidal_embedding(self,x):
-        angular_speeds = 2.0 * T.pi * self.frequencies
-        # if len(x.shape)>=3:
-        #     embeddings = T.concat(
-        #         [T.sin(angular_speeds * x),
-        #         T.cos(angular_speeds * x)],
-        #         axis=3
-        #     )
-        #     embeddings = embeddings.reshape(x.shape[0],self.embedding_dims,1,1)
-        # else:
+        # angular_speeds = 2.0 * T.pi * self.frequencies
+        x = (x - self.min_value) * math.pi / (self.max_value - self.min_value)
+        x = x*self.frequencies
         embeddings = T.concat(
-            [T.sin(angular_speeds * x),
-            T.cos(angular_speeds * x)], axis=-1
+            [x.cos(), x.sin()], axis=-1
         )
         return embeddings
     
-    def __call__(self, x, n_dims:int):
+    def forward(self, x, n_dims:int):
         "iterative embedding for changing noise"
-        return  append_dims(self.sinusoidal_embedding(x), n_dims)
+        return append_dims(self.sinusoidal_embedding(x), n_dims)
 
 class PositionalEncoding(nn.Module):
     # from https://pytorch.org/tutorials/beginner/transformer_tutorial.html

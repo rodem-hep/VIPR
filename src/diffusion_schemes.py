@@ -10,72 +10,41 @@ class Solvers(nn.Module):
     def __init__(self, solver_name):
         super().__init__()
         if "heun2d" in solver_name:
-            self.solver = self.heun2d
+            self.do_heun_step=True
         else:
-            self.solver = self.ddim
+            self.do_heun_step=False
+        self.solver = self.heun2d
 
-    def heun2d(self, initial_noise:T.Tensor | tuple, sigma_steps:np.ndarray, ctxt:dict=None,
-               mask:T.Tensor=None)->T.Tensor:
+    @T.no_grad()
+    def heun2d(self, initial_noise:T.Tensor | tuple, diffusion_steps:np.ndarray,
+               ctxt:dict=None, mask:T.Tensor=None)->T.Tensor:
         if ctxt is None:
             ctxt = {}
 
         #heuns 2nd solver
         # scale to correct std
-        x = initial_noise.detach()*sigma_steps[0]
-        for i in range(len(sigma_steps)-1):
+        x = initial_noise*diffusion_steps[0]
+        for i in range(len(diffusion_steps)-1):
 
             # left tangent
-            dx = (x -self.denoise(x, sigma_steps[i],training=False, ctxt=ctxt.copy(),
-                                  mask=mask)
-                  )/sigma_steps[i]
-            dt = (sigma_steps[i+1]-sigma_steps[i])
+            dx = 1/diffusion_steps[i] * (x-self.denoise(x, diffusion_steps[i],
+                                                        training=False, ctxt=ctxt.copy(),
+                                                        mask=mask))
+            dt = (diffusion_steps[i+1]-diffusion_steps[i])
             # solve euler
             x_1 = x+dt*dx
 
-            if all(sigma_steps[i+1]!=0): # solver heun 2nd
+            if all(diffusion_steps[i+1]!=0) & self.do_heun_step: # solver heun 2nd
                 # right tangent
-                dx_ = 1/sigma_steps[i+1] * (x_1 -self.denoise(x_1, sigma_steps[i+1],
+                dx_ = 1/diffusion_steps[i+1] * (x_1 -self.denoise(x_1, diffusion_steps[i+1],
                                                          training=False,
                                                          ctxt=ctxt.copy(),
                                                          mask=mask))
 
-                x = (x+dt*(1/2*dx+1/2*dx_)).detach()
+                x = (x+dt*(dx+dx_)*0.5)
             else:
-                x = x_1.detach()
+                x = x_1
         return x
-
-    def ddim(self, initial_noise, diffusion_steps, ctxt=None):
-        # reverse diffusion = sampling
-        num_images = initial_noise.shape[0]
-        step_size = 1.0 / diffusion_steps
-
-        # important line:
-        # at the first sampling step, the "noisy image" is pure noise
-        # but its signal rate is assumed to be nonzero (min_signal_rate)
-        next_noisy_images = initial_noise
-        for step in range(diffusion_steps):
-            noisy_images = next_noisy_images.detach()
-
-            # separate the current noisy image to its components
-            diffusion_times = T.ones((num_images, 1, 1, 1), device=self.device) - step * step_size
-            noise_rates, signal_rates = self.uniform_diffusion_time(diffusion_times)
-            pred_noises, pred_images = self.denoise(
-                noisy_images, noise_rates, signal_rates, training=False,
-                ctxt=ctxt
-            )
-            # network used in eval mode
-
-            # remix the predicted components using the next signal and noise rates
-            next_diffusion_times = diffusion_times - step_size
-            next_noise_rates, next_signal_rates = self.uniform_diffusion_time(
-                next_diffusion_times
-            )
-            next_noisy_images = (
-                next_signal_rates * pred_images + next_noise_rates * pred_noises
-            )
-            # this new noisy image will be used in the next step
-
-        return pred_images
 
 class UniformDiffusion(nn.Module):
     "from https://keras.io/examples/generative/ddim/"
@@ -152,21 +121,21 @@ class UniformDiffusion(nn.Module):
 
         return pred_noises, pred_images
 
-    def train_step(self, images, ctxt=None, mask=None):
-        # normalize images to have standard deviation of 1, like the noises
-        self.optimizer.zero_grad(set_to_none=True)
+    # def train_step(self, images, ctxt=None, mask=None):
+    #     # normalize images to have standard deviation of 1, like the noises
+    #     self.optimizer.zero_grad(set_to_none=True)
         
-        log = self._shared_step(images, ctxt, mask, training=True)
+    #     log = self._shared_step(images, ctxt, mask, training=True)
         
-        # apply gradients
-        log["noise_loss"].backward()
-        self.optimizer.step()
+    #     # apply gradients
+    #     log["noise_loss"].backward()
+    #     self.optimizer.step()
 
-        # track the exponential moving averages of weights
-        with T.no_grad():
-            self.ema_network.ema(self.network.state_dict(), self.diffusion_config.ema)
+    #     # track the exponential moving averages of weights
+    #     with T.no_grad():
+    #         self.ema_network.ema(self.network.state_dict(), self.diffusion_config.ema)
 
-        return {i:j.cpu().detach().numpy() for i,j in log.items()}
+    #     return {i:j.cpu().detach().numpy() for i,j in log.items()}
         
         
     def _shared_step(self, images:T.Tensor, ctxt:T.Tensor=None,
@@ -174,14 +143,6 @@ class UniformDiffusion(nn.Module):
         
         # the exponential moving average weights are used at evaluation 
         images= images.to(self.device)
-
-        # normalising images
-        # if self.normalizer is not None:
-        #     images = self.normalizer(images)
-
-            # in denoise
-            # if (ctxt is not None) and (len(ctxt.shape)>2):
-            #     ctxt = self.normalizer(ctxt).to(self.device)
             
         noises = T.randn_like(images)
 
@@ -211,6 +172,7 @@ class UniformDiffusion(nn.Module):
 class ElucidatingDiffusion(Solvers):
     def __init__(self, rho=7, s_min=0.002, s_max=80, s_data=1):
         super().__init__("heun2d")
+        # super().__init__()
         self.rho=rho
         self.s_min=s_min
         self.s_max=s_max
@@ -302,35 +264,11 @@ class ElucidatingDiffusion(Solvers):
             pred_images = network(c_input*noisy_images,sigma_noise, ctxt=ctxt, mask=mask)
             # assert pred_images.dtype is T.float16
 
-            
             # loss function
             loss = self.loss(pred_images[mask],scaled_target[mask].to(self.device))
             # assert loss.dtype is T.float32
 
         return {"noise_loss":loss}
-
-    def train_step(self, images, ctxt=None, mask=None):
-        # normalize images to have standard deviation of 1, like the noises
-        self.optimizer.zero_grad(set_to_none=True)
-            
-        # loss function
-        log = self._shared_step(images, ctxt, mask)
-
-        # apply gradients
-        # apply gradients w/wo mp
-        if self.loss_scaler is not None:
-            self.loss_scaler.scale(log["noise_loss"]).backward()
-            self.loss_scaler.step(self.optimizer)
-            self.loss_scaler.update()
-        else:
-            log["noise_loss"].backward()
-            self.optimizer.step()
-
-        # track the exponential moving averages of weights
-        with T.no_grad():
-            self.ema_network.ema(self.network.state_dict(),self.diffusion_config.ema)
-
-        return {i:j.cpu().detach().numpy() for i,j in log.items()}
 
     def reverse_diffusion(self, images, ctxt=None, mask=None):
         #heuns solver
@@ -343,5 +281,5 @@ class ElucidatingDiffusion(Solvers):
             sigma_steps = sigma_steps.unsqueeze(-1)
 
         return self.solver(initial_noise=images,
-                            sigma_steps=sigma_steps,
+                            diffusion_steps=sigma_steps,
                             ctxt=ctxt, mask=mask)

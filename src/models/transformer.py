@@ -4,7 +4,7 @@ import torch as T
 import torch.nn as nn
 import torchvision as TV
 import numpy as np
-from typing import Optional, List, Tuple, Union
+from typing import Optional, List, Tuple, Union, Callable, Mapping
 from omegaconf import OmegaConf
 
 # internal 
@@ -14,24 +14,26 @@ from tools.torch_utils import activation_functions
 from src.models.modules import FiLM
 import src.positional_encoding as pe
 
-class PCMLP(nn.Module):
-    def __init__(self, in_features:int, out_features:int, n_layers:int=1,
+class DenseNetwork(nn.Module):
+    def __init__(self, in_features:int, out_features:int, n_layers:int=1, ctxt_dim:int=0,
                  act_str:str="leakyrelu", norm:str="", norm_args=None, zeroed=False,
-                 skip_cnt:bool=True):
+                #  skip_cnt:bool=True
+                 ):
         super().__init__()
-        self.skip_cnt=skip_cnt
+        # self.skip_cnt=skip_cnt
         self.norm_args=norm_args if norm_args!=None else {}
-        if in_features!=out_features:
-            self.skip_cnt=False
+        # if in_features!=out_features:
+        #     self.skip_cnt=False
         self.layers = nn.Sequential()
         
+        in_features += ctxt_dim
 
         for _ in range(n_layers-1):
             #add norm
             if ("layer" in norm) & (norm_args is not None):
-                self.layers.append(nn.LayerNorm(**self.norm_args))
+                self.layers.append(nn.LayerNorm(in_features, **self.norm_args))
             elif ("batch" in norm) & (norm_args is not None):
-                self.layers.append(nn.BatchNorm1d(**self.norm_args))
+                self.layers.append(nn.BatchNorm1d(in_features, **self.norm_args))
                 
             #add linear
             self.layers.append(nn.Linear(in_features, in_features))
@@ -53,15 +55,18 @@ class PCMLP(nn.Module):
             self.layers[-1].weight.data.fill_(0.00)
             self.layers[-1].bias.data.fill_(0.00)
 
-    def forward(self, input):
-        if self.skip_cnt:
-            return self.layers(input)+input
-        else:
-            return self.layers(input)
+    def forward(self, input, ctxt: T.Tensor | None = None):
+        if ctxt is not None:
+            if len(input.shape) != len(ctxt.shape):
+                ctxt = ctxt.view(*input.shape[:-1],ctxt.shape[-1])
+            if input.shape[:-1] != ctxt.shape[:-1]:
+                ctxt = ctxt.expand(*input.shape[:-1],ctxt.shape[-1])
+            input = T.concat([input, ctxt], -1)
+        return self.layers(input)
             
 def merge_masks(
-    q_mask: Union[T.BoolTensor, None],
-    kv_mask: Union[T.BoolTensor, None],
+    # mask_q: Union[T.BoolTensor, None],
+    mask_vk: Union[T.BoolTensor, None],
     # attn_mask: Union[T.BoolTensor, None],
     q_shape: T.Size,
     k_shape: T.Size,
@@ -74,12 +79,14 @@ def merge_masks(
     merged_mask = None
 
     # If either pad mask exists, create
-    if q_mask is not None or kv_mask is not None:
-        if q_mask is None:
-            q_mask = T.full((q_shape[0], q_shape[1]), True, device=device)
-        if kv_mask is None:
-            kv_mask = T.full((k_shape[0], k_shape[1]), True, device=device)
-        merged_mask = q_mask.unsqueeze(-1) & kv_mask.unsqueeze(-2)
+    if mask_vk is not None:
+    # if mask_q is not None or mask_vk is not None:
+        # if mask_q is None:
+        #     mask_q = T.full((q_shape[0], q_shape[1]), True, device=device)
+        if mask_vk is None:
+            mask_vk = T.full((k_shape[0], k_shape[1]), True, device=device)
+        merged_mask = mask_vk.unsqueeze(-2).expand(-1, q_shape[-2], -1)
+        # merged_mask = mask_q.unsqueeze(-1) & mask_vk.unsqueeze(-2)
 
     # If attention mask exists, create
     # if attn_mask is not None:
@@ -183,7 +190,7 @@ class MultiHeadAttention(nn.Module):
             )
         
         self.out_proj = nn.Sequential(
-            nn.LayerNorm(self.depth_vk),
+            # nn.LayerNorm(self.depth_vk),
             nn.Linear(self.depth_vk, self.depth_q),
             )
         if self.zero_init:
@@ -192,11 +199,11 @@ class MultiHeadAttention(nn.Module):
 
         self.to(self.device)
     
-    def forward(self, v: T.Tensor, k: T.Tensor, q: T.Tensor,
-                 mask_vk: T.Tensor=None, mask_q: T.Tensor=None
-                 )->T.Tensor:
+    # def forward(self, v: T.Tensor, k: T.Tensor, q: T.Tensor,
+    #              mask_vk: T.Tensor=None, mask_q: T.Tensor=None
+    #              )->T.Tensor:
         
-        return self._forward(v, k, q, mask_vk=mask_vk, mask_q=mask_q)
+    #     return self._forward(v, k, q, mask_vk=mask_vk, mask_q=mask_q)
     
     def image_forward(self, v: T.Tensor, k: T.Tensor, q: T.Tensor) -> T.Tensor:
         # Get the shape of the q tensor and save the original for later
@@ -220,17 +227,22 @@ class MultiHeadAttention(nn.Module):
         # Return the additive connection to the original q
         return a_out
 
-    def _forward(self, v: T.Tensor, k: T.Tensor, q: T.Tensor,
+    def forward(self, q: T.Tensor, v: T.Tensor = None, k: T.Tensor = None,
                  mask_vk: T.Tensor=None, mask_q: T.Tensor=None,
                  attn_mask: T.Tensor=None
                  ) -> T.Tensor:
-        # q_orig = q.clone()
+
+        # If only q is provided then we automatically apply self attention
+        if k is None:
+            k = q
+        if v is None:
+            v = k
 
         batch_size = q.shape[0]
         
         #attn mask
         if (mask_vk is not None) or (mask_q is not None):
-            attn_mask = merge_masks(mask_q, mask_vk, q.shape, k.shape, q.device)
+            attn_mask = merge_masks(mask_vk, q.shape, k.shape, q.device)
             # B x n_heads x L x S
             attn_mask = attn_mask.unsqueeze(1).repeat(1,self.attn_heads,1,1)
 
@@ -248,9 +260,9 @@ class MultiHeadAttention(nn.Module):
 
         # Permute for the attention to apply each head independantly
         # B, num_heads, HxW, channels_per_head/features
-        q = q.transpose(1, -2).contiguous()
-        k = k.transpose(1, -2).contiguous()
-        v = v.transpose(1, -2).contiguous()
+        q = q.transpose(1, 2).contiguous()
+        k = k.transpose(1, 2).contiguous()
+        v = v.transpose(1, 2).contiguous()
 
         # Now we can apply the attention operation
         a_out = T.nn.functional.scaled_dot_product_attention(q, k, v,
@@ -263,204 +275,151 @@ class MultiHeadAttention(nn.Module):
         # Pass through the final 1x1 convolution layer: B, q_dim, HxW
         return self.out_proj(a_out)
 
-class MultiHeadGateAttention(MultiHeadAttention):
-    # similar to https://arxiv.org/pdf/2103.06104.pdf
-    def __init__(self, depth_q, depth_vk, image_shape_q, image_shape_vk,
-                 pos_encode_kwargs, attn_heads=4, device="cuda", **kwargs):
-        if np.any(image_shape_q[0] != image_shape_vk[0]):
-            raise ValueError("Image dimension between q and vk has to be the same")
-        super().__init__(depth_q=depth_vk, depth_vk=depth_vk,
-                         image_shape_q=image_shape_q, image_shape_vk=image_shape_vk,
-                         pos_encode_kwargs=pos_encode_kwargs, attn_heads=attn_heads, device=device, **kwargs)
-        self.original_depth_q=depth_q
+########### Layers ###########
+
+class TransformerEncoderLayer(nn.Module):
+    "self attention"
+    def __init__(
+        self,
+        model_dim: int,
+        mha_config: Mapping | None = None,
+        dense_cfg: Mapping | None = None,
+        ctxt_dim: int = 0
+        ):
         
-        self.values_conv = nn.Sequential(nn.Conv2d(self.depth_vk, self.depth_vk, kernel_size=1),
-                                  nn.BatchNorm2d(self.depth_vk),
-                                  nn.SiLU())
-
-        self.keys_conv = nn.Sequential(nn.Conv2d(self.depth_vk, self.depth_vk, kernel_size=1),
-                                  nn.BatchNorm2d(self.depth_vk),
-                                  nn.SiLU())
-
-        self.queries_conv = nn.Sequential(nn.Conv2d(self.original_depth_q, self.depth_vk, kernel_size=1),
-                                  nn.BatchNorm2d(self.depth_vk),
-                                  nn.SiLU())
-
-        # Upsample before or after attention??!??!
-        #after results in every 2x2 is the same
-        self.conv = nn.Sequential(
-                                # nn.Upsample(scale_factor=2, mode='nearest'),
-                                nn.Conv2d(self.depth_vk, self.depth_vk, kernel_size=1),
-                                # nn.BatchNorm2d(self.depth_vk),
-                                nn.Sigmoid()
-                                  )
-        self.to(self.device)
-
-    def forward(self, values, keys, queries):
-
-        queries = self.queries_conv(queries)
-        values = self.values_conv(values)
-        keys = self.keys_conv(keys)
-
-        gate_images = self.image_forward(values, keys, queries)
-
-        return self.conv(gate_images) * values
-        
-
-class MultiHeadSelfAttention(MultiHeadAttention):
-    def __init__(self, depth, image_shape, pos_encode_kwargs,
-                 attn_heads=4, device="cuda", **kwargs):
-
-        super().__init__(depth, depth, image_shape_q=image_shape,
-                         image_shape_vk=image_shape,
-                         pos_encode_kwargs=pos_encode_kwargs,
-                         attn_heads=attn_heads, device=device, **kwargs)
-
-    def forward(self, inputs):
-        # return inputs+self.image_forward(inputs,inputs,inputs)
-        return self.image_forward(inputs,inputs,inputs)
-    
-class VisionTransformerLayer(nn.Module):
-    """
-    implementation of ViT and T2TViT
-
-    Need to have difference between channel features and patch features
-        trainable postional encoding 3d
-
-    First attention in patch then between patches?
-
-    """
-    def __init__(self, img_shape:np.ndarray, n_channels:int, kernel_size:tuple=None,
-                 n_patches:int=None,
-                 downscale_size:int=64,
-                 attn_heads:int=16,
-                 stride:int=None,
-                dropout:float=0.1,
-                trainable_pe:bool=True,
-                device:str="cpu"
-                    ):
         super().__init__()
-        if (n_patches is None) and (kernel_size is None):
-            raise ValueError("either n_patches or kernel_size has to be defined")
-        
-        if isinstance(img_shape, (int, np.int64)):
-            self.img_shape = np.array([img_shape,img_shape])
-        else:
-            self.img_shape=np.array(img_shape)
-        self.n_channels=n_channels
-        self.kernel_size=kernel_size
-        self.trainable_pe=trainable_pe
-        self.dropout=dropout
-        self.n_patches=n_patches
-        if n_patches is None:
-            if not isinstance(kernel_size, tuple):
-                raise TypeError("kernel_size has to be a tuple")
-            self.n_patches=self.img_shape//kernel_size
-        elif kernel_size is None:
-            self.kernel_size = tuple(self.img_shape//n_patches)
-        self.stride=stride if stride is not None else self.kernel_size
-        self.attn_heads=attn_heads
-        self.downscale_size=downscale_size
-        self.device=device
-        # self.flatten_channels=True
+        mha_config = mha_config or {}
+        dense_cfg = dense_cfg or {}
+        self.model_dim = model_dim
+        self.ctxt_dim = ctxt_dim
 
+        # The basic blocks
+        self.self_attn = MultiHeadAttention(
+            model_dim, model_dim, **mha_config
+        )
+        self.dense = DenseNetwork(model_dim, model_dim, **dense_cfg)
 
-        self.patch_img_dim=self.img_shape//self.n_patches
-        self.patch_features=np.product(self.patch_img_dim)
-        self.total_features = self.patch_features*self.n_channels
+        # The pre MHA and pre FFN layer normalisations
+        self.input_norm = nn.LayerNorm(model_dim)
+        self.after_attn_norm = nn.LayerNorm(model_dim)
 
-        if all(self.img_shape != self.patch_img_dim*self.n_patches):
-            print(f"self.patch_dim: {self.patch_img_dim}")
-            print(f"self.img_shape: {self.img_shape}")
-            raise ValueError("Image not divisible")
+    def forward(
+        self,
+        x: T.Tensor,
+        mask: Optional[T.BoolTensor] = None,
+        ctxt: T.Tensor | None = None,
+        # attn_bias: T.Tensor | None = None,
+        attn_mask: Optional[T.BoolTensor] = None,
+    ) -> T.Tensor:
+        """Pass using residual connections and layer normalisation."""
+        x = x + self.self_attn(
+            self.input_norm(x),mask_vk=mask,
+            mask_q=mask, attn_mask=attn_mask#, attn_bias=attn_bias
+        )
+        x = x + self.dense(self.after_attn_norm(x))#, ctxt)
+        return x
 
-        self.get_network()
-    
-    def get_network(self):
-        self.downscale_nn= nn.Sequential(
-            nn.BatchNorm1d(self.total_features),
-            nn.LeakyReLU(),
-            nn.Dropout(p=self.dropout),
-            nn.Conv1d(self.total_features, self.downscale_size, 1)
+class TransformerDecoderLayer(nn.Module):
+    """A transformer dencoder layer based on the GPT-2+Normformer style arcitecture.
+
+    It contains:
+    - self-attention-block
+    - cross-attention block
+    - dense network
+
+    Layer norm is applied before each layer
+    Residual connections are used, bypassing each layer
+
+    Attnention masks and biases are only applied to the self attention operation
+    """
+
+    def __init__(
+        self,
+        model_dim: int,
+        mha_config: Mapping | None = None,
+        dense_cfg: Mapping | None = None,
+        ctxt_dim: int = 0,
+        init_self_attn: bool=False,
+    ) -> None:
+        """
+        Args:
+            mha_config: Keyword arguments for multiheaded-attention block
+            dense_cfg: Keyword arguments for feed forward network
+        """
+        super().__init__()
+        mha_config = mha_config or {}
+        dense_cfg = dense_cfg or {}
+        self.model_dim = model_dim
+        self.ctxt_dim = ctxt_dim
+        self.init_self_attn = init_self_attn
+
+        # The basic blocks
+        if self.init_self_attn:
+            self.self_attn = MultiHeadAttention(
+                model_dim, model_dim, **mha_config
+            )
+            self.norm_preSA = nn.LayerNorm(model_dim)
+
+        self.cross_attn = MultiHeadAttention(
+            model_dim, model_dim, **mha_config
+        )
+        self.dense = DenseNetwork(
+            model_dim, model_dim, **dense_cfg #, ctxt_dim=ctxt_dim
+        )
+
+        # The pre_operation normalisation layers (lots from Foundation Transformers)
+        self.norm_preC1 = nn.LayerNorm(model_dim)
+        self.norm_preC2 = nn.LayerNorm(model_dim)
+        self.norm_preNN = nn.LayerNorm(model_dim)
+
+    def forward(
+        self,
+        q_seq: T.Tensor,
+        kv_seq: T.Tensor,
+        mask_q: Optional[T.BoolTensor] = None,
+        mask_vk: Optional[T.BoolTensor] = None,
+        ctxt: T.Tensor | None = None,
+        attn_bias: T.Tensor | None = None,
+        attn_mask: Optional[T.BoolTensor] = None,
+    ) -> T.Tensor:
+        """Pass using residual connections and layer normalisation."""
+
+        # Apply the self attention residual update
+        if self.init_self_attn:
+            q_seq = q_seq + self.self_attn(
+                self.norm_preSA(q_seq),
+                mask_vk=mask_q,
+                attn_mask=attn_mask,
+                # attn_bias=attn_bias,
             )
 
-        self.transformer_layer = MultiHeadAttention(self.downscale_size,
-                                                    self.downscale_size,
-                                                    attn_heads=self.attn_heads,
-                                                    trainable_pe=False,
-                                                    device=self.device)
+        # Apply the cross attention residual update
+        q_seq = q_seq + self.cross_attn(
+            q=self.norm_preC1(q_seq), k=self.norm_preC2(kv_seq), mask_vk=mask_vk
+        )
 
-        self.upscale_nn= nn.Sequential(
-            nn.BatchNorm1d(self.downscale_size),
-            nn.LeakyReLU(),
-            nn.Dropout(p=self.dropout),
-            nn.Conv1d(self.downscale_size, self.total_features, 1),
-            )
-        
-        self.upscale_nn[-1].weight.data.fill_(0.00)
-        self.upscale_nn[-1].bias.data.fill_(0.00)
+        # Apply the dense residual update
+        q_seq = q_seq + self.dense(self.norm_preNN(q_seq)) # , ctxt
 
-        if self.trainable_pe:
-           self.pe = T.nn.Parameter(T.randn(self.n_channels, *self.img_shape))
+        return q_seq
 
-        # fold/unfolding
-        self.args = {"kernel_size":self.kernel_size,
-                           "dilation":1,
-                           "padding":0,
-                           "stride":self.stride}
-        self.unfold = nn.Unfold(**self.args)
-        self.fold = nn.Fold(output_size=tuple(self.img_shape), **self.args)
-
-
-        self.to(self.device)
-
-    def forward(self, image):
-
-        image_orig = image.clone()
-
-        # add positional encoding
-        if self.trainable_pe:
-           image = image+self.pe
-
-        # prepare image
-        image_processed = self.unfold(image)
-        # image_processed = self.img_to_patch(image)
-
-        # downscale
-        image_processed = self.downscale_nn(image_processed)
-
-        attn_image = self.transformer_layer(image_processed,
-                                            image_processed,
-                                            image_processed)
-
-        # upscale
-        attn_image = self.upscale_nn(attn_image)
-
-        # fold image back
-        output_image = self.fold(attn_image)
-        
-        return output_image+image_orig
-
-class PerceiverBlock(nn.Module):
-    def __init__(self, input_query_dims:int, output_query_dims:int,
-                 latent_dims:list, n_processes=2, film_cfg:dict=None,
-                 mlp_cfg:dict=None, attn_heads:int = 4, device:str="cuda"):
+class PerceiverLayer(nn.Module):
+    def __init__(self, latent_dim:list, encode_cfg:dict, decode_cfg:dict,
+                 process_cfg:dict=None, film_cfg:dict=None, dense_cfg:dict=None,
+                 n_processes:int=0, device:str="cuda"):
         super().__init__()
-        self.input_query_dims=input_query_dims
-        self.output_query_dims=output_query_dims
-        self.latent_dims=latent_dims
+        self.latent_dim=latent_dim
+        self.process_cfg=process_cfg
         self.n_processes=n_processes
-        self.attn_heads=attn_heads
-        self.device = device
         self.film_cfg=film_cfg
-        self.mlp_cfg=mlp_cfg if mlp_cfg!=None else {}
+        self.encode_cfg=encode_cfg
+        self.decode_cfg=decode_cfg
+        self.dense_cfg=dense_cfg if dense_cfg!=None else {}
+        self.device = device
+
         # Layers
         self.film_layer = None
         self.processing_layers = nn.ModuleList([])
-        self.mlp_processing_layers = nn.ModuleList([])
-        self.post_mlp_norms = nn.ModuleList([])
-        self.pre_mlp_norms = nn.ModuleList([])
-        # self.mlp_processing_layers = nn.ModuleList([])
 
         #init network
         self.get_network()
@@ -469,105 +428,186 @@ class PerceiverBlock(nn.Module):
 
     def get_network(self) -> None:
         # trainable latent space
-        self.latent_arr = T.nn.Parameter(T.randn(*self.latent_dims))
+        self.latent_arr = T.nn.Parameter(T.randn(*self.latent_dim))
         self.latent_mask = T.full(self.latent_arr.shape, True)
         
-        self.in_query_norm = nn.LayerNorm(self.input_query_dims)
-        self.out_query_norm = nn.LayerNorm(self.output_query_dims)
-        self.post_self_attn_norm = nn.LayerNorm(self.latent_dims[-1])
+        # self.in_query_norm = nn.LayerNorm(self.input_dim)
+        # self.out_query_norm = nn.LayerNorm(self.output_dim)
+        # self.post_self_attn_norm = nn.LayerNorm(self.latent_dim[-1])
         
         ### Encoder
-        self.encode_layer = MultiHeadAttention(depth_q=self.latent_dims[-1],
-                                               depth_vk=self.input_query_dims,
-                                               attn_heads=self.attn_heads,
-                                               zero_init=False)
+        self.encode_layer = TransformerDecoder(**self.encode_cfg)
 
-        self.post_init_query_mlp = PCMLP(self.latent_dims[-1],self.latent_dims[-1],
-                                        #  norm_args={"normalized_shape":self.latent_dims[-1]},
-                                         **self.mlp_cfg)
+        self.post_init_query_mlp = DenseNetwork(self.latent_dim[-1],self.latent_dim[-1],
+                                         **self.dense_cfg)
         
         ### Processor
         for _ in range(self.n_processes):
-            self.mlp_processing_layers.append(PCMLP(
-                self.latent_dims[-1],self.latent_dims[-1],
-                norm_args={"normalized_shape":self.latent_dims[-1]}, **self.mlp_cfg)
-                )
-            self.pre_mlp_norms.append(
-                nn.LayerNorm(self.latent_dims[-1]),
-            )
-            self.processing_layers.append(MultiHeadAttention(depth_q=self.latent_dims[-1],
-                                                             depth_vk=self.latent_dims[-1],
-                                                             attn_heads=self.attn_heads,
-                                                             zero_init=False))
+            self.processing_layers.append(TransformerEncoder(**self.process_cfg))
+        
+        ### decoder
+        self.decode_layer = TransformerDecoder(**self.decode_cfg)
+
+        self.last_query_mlp = DenseNetwork(self.latent_dim[-1],self.latent_dim[-1],
+                                         **self.dense_cfg)
 
         # film for context
-        if self.film_cfg is not None:
+        if (self.film_cfg is not None) & (self.n_processes>0):
             self.film_layer = FiLM(**self.film_cfg,
-                                   lst_channel=[self.latent_dims[-1]]*(self.n_processes+1))
+                                   lst_channel=[self.latent_dim[-1]]*(self.n_processes+1))
 
-        ### Decoder
-        self.last_query_mlp = PCMLP(
-                self.output_query_dims,self.output_query_dims,
-                norm_args={"normalized_shape":self.output_query_dims},
-                skip_cnt=False, **self.mlp_cfg
-                )
+    def forward(self, input_ten:T.Tensor, ctxt_ten:T.Tensor, mask_vk:T.Tensor,
+                ctxt:T.Tensor=None) -> T.Tensor:
 
-        self.decode_layer = MultiHeadAttention(depth_q=self.output_query_dims,
-                                               depth_vk=self.latent_dims[-1],
-                                               attn_heads=self.attn_heads,
-                                               zero_init=False)
-   
-    def forward(self, input_arr:T.Tensor, input_mask:T.Tensor,
-                output_arr:T.Tensor, output_mask:T.Tensor,
-                scalar_ctxt:T.Tensor=None) -> T.Tensor:
-        
         # init film context
         if self.film_layer is not None:
-            self.film_layer(scalar_ctxt)
+            self.film_layer(ctxt)
         
-        latent_ten = self.latent_arr.expand(len(input_arr),*self.latent_arr.shape)
+        latent_ten = self.latent_arr.expand(len(ctxt_ten),*self.latent_arr.shape)
         
-        ### Encode input_arr to latent_ten size
-        norm_input_arr = self.in_query_norm(input_arr)
-        latent_ten = self.encode_layer(norm_input_arr, norm_input_arr,
-                                        latent_ten,
-                                        mask_vk=input_mask,
-                                        )#+latent_ten
+        ### Encode ctxt_ten to latent_ten
+        latent_ten = self.encode_layer(latent_ten, ctxt_ten, mask_vk=mask_vk)
 
         #ctxt from FiLM
         if self.film_layer is not None:
             FiLM_para = next(self.film_layer)
             latent_ten =  FiLM_para[:,0:1]*latent_ten+FiLM_para[:,1:2]
 
-        # l-norm + MLP + residual connection
-        latent_ten = self.post_init_query_mlp(latent_ten)
-        
-        ### Processor (self attn)
+
+        ### Processor
         for nr_layer in range(self.n_processes):
 
             if self.film_layer is not None:
                 FiLM_para = next(self.film_layer)
-                latent_vals =  FiLM_para[:,0:1]*latent_ten+FiLM_para[:,1:2]
+                latent_ten =  FiLM_para[:,0:1]*latent_ten+FiLM_para[:,1:2]
 
-            latent_vals = self.pre_mlp_norms[nr_layer](latent_vals)
-            latent_ten = self.processing_layers[nr_layer](latent_vals,
-                                                           latent_vals,
-                                                           latent_vals)+latent_ten
+            latent_ten = self.processing_layers[nr_layer](latent_ten)
 
-            latent_ten = self.mlp_processing_layers[nr_layer](latent_ten)
-        latent_ten = self.post_self_attn_norm(latent_ten)
-            
-        ### Decoder cross attn
-        # norm both pc
-        norm_out_arr = self.out_query_norm(output_arr)
-
-        # TODO should this use mask_q=output_mask ?
-        output = self.decode_layer(latent_ten, latent_ten, norm_out_arr,
-                                #    mask_q=output_mask
-                                   )
+        ### Decoder latent_ten to input_ten
+        output = self.decode_layer(input_ten, latent_ten)
 
         # skip connection
-        return self.last_query_mlp(output)+output_arr
+        return output
+        # return self.last_query_mlp(output)+output_ten
+
+
+########### Blocks ###########
+
+class TransformerEncoder(nn.Module):
+    """A stack of N transformer encoder layers followed by a final normalisation step.
+
+    Sequence -> Sequence
+    """
+
+    def __init__(
+        self,
+        model_dim: int = 64,
+        num_layers: int = 3,
+        mha_config: Mapping | None = None,
+        dense_cfg: Mapping | None = None,
+        ctxt_dim: int = 0,
+    ) -> None:
+        """
+        Args:
+            model_dim: Feature sieze for input, output, and all intermediate layers
+            num_layers: Number of encoder layers used
+            mha_config: Keyword arguments for the mha block
+            dense_cfg: Keyword arguments for the dense network in each layer
+            ctxt_dim: Dimension of the context inputs
+        """
+        super().__init__()
+        self.model_dim = model_dim
+        self.num_layers = num_layers
+        self.layers = nn.ModuleList(
+            [
+                TransformerEncoderLayer(model_dim, mha_config, dense_cfg, ctxt_dim)
+                for _ in range(num_layers)
+            ]
+        )
+        self.final_norm = nn.LayerNorm(model_dim)
+
+    def forward(self, x: T.Tensor, **kwargs) -> T.Tensor:
+        """Pass the input through all layers sequentially."""
+        for layer in self.layers:
+            x = layer(x, **kwargs)
+        return self.final_norm(x)
+
+class TransformerDecoder(nn.Module):
+    """A stack of N transformer dencoder layers followed by a final normalisation step.
+
+    Sequence x Sequence -> Sequence
+    """
+
+    def __init__(
+        self,
+        model_dim: int,
+        num_layers: int,
+        mha_config: Mapping | None = None,
+        dense_cfg: Mapping | None = None,
+        ctxt_dim: int = 0,
+        init_self_attn:bool = False,
+    ) -> None:
+        """
+        Args:
+            model_dim: Feature sieze for input, output, and all intermediate layers
+            num_layers: Number of encoder layers used
+            mha_config: Keyword arguments for the mha block
+            dense_cfg: Keyword arguments for the dense network in each layer
+            ctxt_dim: Dimension of the context input
+        """
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [
+                TransformerDecoderLayer(model_dim, mha_config, dense_cfg, ctxt_dim,
+                                        init_self_attn=init_self_attn)
+                for _ in range(num_layers)
+            ]
+        )
+        self.init_self_attn=init_self_attn
+        self.model_dim = model_dim
+        self.num_layers = num_layers
+        self.final_norm = nn.LayerNorm(model_dim)
+
+    def forward(self, q_seq: T.Tensor, kv_seq: T.Tensor, **kwargs) -> T.Tensor:
+        """Pass the input through all layers sequentially."""
+        for layer in self.layers:
+            q_seq = layer(q_seq, kv_seq, **kwargs)
+        return self.final_norm(q_seq)
+
+class Perceiver(nn.Module):
+    """A stack of N transformer dencoder layers followed by a final normalisation step.
+
+    Sequence x Sequence -> Sequence
+    """
+
+    def __init__(
+        self,
+        pcivr_cfg: Mapping | None,
+        num_layers: int = 1,
+    ) -> None:
+        """
+        Args:
+            pcivr_cfg: PerceiverLayer config
+            num_layers: Number of encoder layers used
+        """
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [
+                PerceiverLayer(**pcivr_cfg)
+                for _ in range(num_layers)
+            ]
+        )
+        self.pcivr_cfg=pcivr_cfg
+        self.num_layers=num_layers
+
+        # self.final_norm = nn.LayerNorm(model_dim)
+
+    def forward(self, input_ten: T.Tensor, ctxt_ten: T.Tensor, **kwargs) -> T.Tensor:
+        """Pass the input through all layers sequentially."""
+        for layer in self.layers:
+            input_ten = layer(input_ten, ctxt_ten, **kwargs)
+        return input_ten
+        # return self.final_norm(q_seq)
 
 
 def test_get_data():

@@ -17,14 +17,15 @@ import hydra
 
 # internal
 from tools import misc
+from tools import schedulers
 import src.diffusion_schemes as ds
 # from src.models.image_model import UNet # used on hydra
 from src.utils import fig2img
 import src.pipeline as pl
 
 class DiffusionModel(
-    # ds.UniformDiffusion
-    ds.ElucidatingDiffusion
+    ds.UniformDiffusion
+    # ds.ElucidatingDiffusion
     ):
     def __init__(self, diffusion_config, network, save_path,
                  train_loader, test_loader, wandb=None, device="cuda",
@@ -42,7 +43,7 @@ class DiffusionModel(
         
         # mixed precision
         self.loss_scaler = None
-        self.loss_scaler = T.cuda.amp.GradScaler()
+        # self.loss_scaler = T.cuda.amp.GradScaler()
 
         # get norms
         self.eval_ctxt =None
@@ -64,18 +65,21 @@ class DiffusionModel(
 
         self.optimizer = T.optim.AdamW(self.network.parameters(),
                                        lr=diffusion_config.learning_rate)
+        if "lr_scheduler" in diffusion_config:
+            self.lr_scheduler = schedulers.get_scheduler(optimizer=self.optimizer,
+                                                         **diffusion_config.lr_scheduler)
 
 
-        self.log_columns=["epoch", "denoise_images"]
+        self.log_columns=["epoch", "denoise_images", "lr"]
         self.log_columns += [f"{j}_{i}" for i in ["train", "valid"]
-                                for j in ["noise_loss", "image_loss"]]
+                                for j in ["noise_loss", "image_loss","clip"]] 
         self.log={i:[] for i in self.log_columns}
 
         self.loss = nn.MSELoss()
 
 
         # eval with same noise
-        n_cnts = self.eval_ctxt.pop("true_n_cnts",self.train_loader.dataset.max_cnstits)
+        n_cnts = self.eval_ctxt.pop("true_n_cnts",self.test_loader.dataset.max_cnstits)
         self.initial_noise = pl.generate_gaussian_noise(eval_ctxt=self.eval_ctxt,
                                                         n_constituents=n_cnts,
                                                         **diffusion_config.init_noise)
@@ -176,6 +180,39 @@ class DiffusionModel(
             for i,j in noise_loss.items():
                 if len(j)>0:
                     self.log[f"{i}_valid"] = np.mean(j)
+
+    def train_step(self, images, ctxt=None, mask=None):
+        # normalize images to have standard deviation of 1, like the noises
+        self.optimizer.zero_grad(set_to_none=True)
+            
+        # loss function
+        log = self._shared_step(images, ctxt, mask)
+
+        # apply gradients
+        # apply gradients w/wo mp
+        if self.loss_scaler is not None:
+            self.loss_scaler.scale(log["noise_loss"]).backward()
+            # Unscales the gradients of optimizer's assigned params in-place
+            # self.loss_scaler.unscale_(self.optimizer)
+
+            # # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
+            # clip_gradient = T.nn.utils.clip_grad_norm_(self.network.parameters(), 10)
+            # log["clip"] = clip_gradient
+            # optimizer's gradients are already unscaled, so scaler.step does not unscale them,
+            # although it still skips optimizer.step() if the gradients contain infs or NaNs.
+            self.loss_scaler.step(self.optimizer)
+            self.loss_scaler.update()
+        else:
+            log["noise_loss"].backward()
+            self.optimizer.step()
+            
+        self.lr_scheduler.step()
+
+        # track the exponential moving averages of weights
+        with T.no_grad():
+            self.ema_network.ema(self.network.state_dict(),self.diffusion_config.ema)
+
+        return {i:j.cpu().detach().numpy() for i,j in log.items()}
                 
     def run_training(self, run_eval=True):
         
@@ -190,20 +227,23 @@ class DiffusionModel(
                 self.run_evaluate(self.test_loader, ep)
 
             # run over training samples
+            n_train_size=0
             for nr, sample in enumerate(self.train_loader):
 
                 # sample = {i: j.to(self.device) for i,j in sample.items()}
 
                 log_ep = self.train_step(**sample)
+                n_train_size+=len(sample["images"])
                 
                 for key, items in log_ep.items():
                     if np.isnan(items):
                         raise ValueError("is NaN")
                     self.log[key+"_train"].append(items)
-                    
             # input logging
             for key in log_ep:
                 self.log[key+"_train"] = np.mean(self.log[key+"_train"])
+
+            self.log["lr"] = self.optimizer.state_dict()["param_groups"][0]["lr"]
             
             if run_eval:
                 if self.log["noise_loss_valid"]<self.noise_loss_best:
@@ -289,7 +329,11 @@ def main(config):
                                            loader_config=config.data_cfgs.loader_config)
     test_loader = hydra.utils.instantiate(config.data_cfgs.valid,
                                           loader_config=config.data_cfgs.loader_config,
-                                          max_cnstits=train_loader.max_cnstits)
+                                          max_cnstits=train_loader.dataset.max_cnstits,
+                                          jet_norms=train_loader.dataset.jet_norms,
+                                          mean=train_loader.dataset.mean,
+                                          std=train_loader.dataset.std,
+                                          )
 
     #dataloader
     if "Jet" in test_loader.__str__():
