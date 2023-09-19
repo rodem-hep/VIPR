@@ -58,13 +58,3 @@ trans_cfg:
   #     activation_str: gelu
   #     batchnorm: true
   #     device: ${device}
-
-
-# trans_cfg:
-#   model_dim: ${..upscale_dims}
-#   dense_cfg: ${..dense_cfg}
-#   mha_config: 
-#     attn_heads: 8
-#   num_layers: 4
-#   ctxt_dim: ${..upscale_dims} 
-#   init_self_attn: True

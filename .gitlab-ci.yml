@@ -3,7 +3,7 @@
 variables:
   TORCHTAG: 2.0.0-cuda11.7-cudnn8-runtime
   IMAGE_TYPE: otcalibbase:latest
-  SLIM_IMAGE: python:3.8-slim
+  SLIM_IMAGE: python:3.10-slim
 
 stages:
 #  - linting

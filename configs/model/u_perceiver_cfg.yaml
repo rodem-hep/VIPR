@@ -1,0 +1,36 @@
+# device setting
+device: cpu
+
+# denset network
+dense_cfg:
+  act_str: gelu
+  n_layers: 3
+  norm: layer
+
+trans_cfg:
+  cnts_sizes: [64, 32, 16]
+  input_dim: 3
+  model_dim: 64
+  pcivr_cfg:
+    device: ${...device} 
+    n_processes: 1
+    dense_cfg: ${...dense_cfg}
+
+    encode_cfg:
+      model_dim: ${...model_dim}
+      num_layers: 1
+      mha_config: 
+        attn_heads: 8
+      init_self_attn: False
+      dense_cfg: ${..dense_cfg}
+      ctxt_dim: 0
+
+    process_cfg:       
+      model_dim: ${...model_dim}
+      num_layers: 1
+      mha_config: 
+        attn_heads: 8
+      dense_cfg: ${..dense_cfg}
+      ctxt_dim: 0
+
+    decode_cfg: null #${.encode_cfg}
