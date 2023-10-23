@@ -1,0 +1,21 @@
+_target_: src.models.pc_model.PCDiffusion
+
+device: ${device}
+
+# input dims
+vkq_dims: 3
+embedding_cfg: ${trainer.embedding_cfg}
+# ctxt_dims: null
+upscale_dims: 128
+num_layers: 3
+
+dense_cfg:
+  act_str: gelu
+  n_layers: 2
+  norm: layer
+
+defaults:
+  - _self_
+  # - perceiver_cfg.yaml
+  - transformer_cfg.yaml
+  # - u_perceiver_cfg.yaml

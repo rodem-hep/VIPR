@@ -4,6 +4,58 @@ import torch.nn as nn
 import numpy as np
 # internal
 import src.utils as utils
+from typing import Union
+from torch.utils.data import DataLoader
+
+from tools.datamodule.pipeline import Loader
+
+
+def generate_gaussian_noise(shape:dict, datatype:str, 
+                            eval_ctxt:dict,
+                            n_constituents: Union[tuple, int]=None,
+                            size:int=None, **kwargs):
+    if size is None:
+        size = 1e10
+    # move ctxt tensor to array
+    for i in eval_ctxt:
+        if isinstance(eval_ctxt[i], T.Tensor):
+            eval_ctxt[i] = eval_ctxt[i].cpu().numpy()
+    "generate noisy images for diffusion"
+    if "image" in datatype:
+        if (len(eval_ctxt)) and (size > len(eval_ctxt.get("images", []))):
+            size = len(eval_ctxt["images"])
+        mask=None
+        gaussian_noise = T.randn(tuple([size]+shape["images"])).numpy()
+
+    elif "pc" in datatype:
+        if n_constituents is None:
+            raise ValueError("n_constituents has to be defined")
+        
+        # calculate the n constituents
+        if isinstance(n_constituents, tuple):
+            n_constituents = np.random.randint(*n_constituents, size)
+        elif isinstance(n_constituents, int):
+            n_constituents = np.random.randint(1, n_constituents, size=size)
+        
+        if size>len(n_constituents):
+            size = len(n_constituents)
+            
+        if not isinstance(n_constituents, np.ndarray):
+            raise TypeError("n_constituents has to be a np.array")
+
+        mask = np.zeros([size]+shape["images"][:1])==1
+        for nr,i in enumerate(n_constituents[:size]):
+            mask[nr, :i] = True
+        gaussian_noise = T.randn(tuple([size]+shape["images"])).numpy()
+        
+        #reduce eval_ctxt size
+        for i in eval_ctxt:
+            eval_ctxt[i] =eval_ctxt[i][:size]
+
+    return DataLoader(Loader(gaussian_noise,mask=mask,ctxt=eval_ctxt),
+                      **kwargs.get("loader_kwargs",
+                                   {"batch_size": 512, "num_workers": 8})
+                      )
 
     
 class Solvers(nn.Module):
@@ -16,7 +68,7 @@ class Solvers(nn.Module):
         self.solver = self.heun2d
 
     @T.no_grad()
-    def heun2d(self, initial_noise:T.Tensor | tuple, diffusion_steps:np.ndarray,
+    def heun2d(self, initial_noise:Union[T.Tensor, tuple], diffusion_steps:np.ndarray,
                ctxt:dict=None, mask:T.Tensor=None)->T.Tensor:
         if ctxt is None:
             ctxt = {}
@@ -69,13 +121,13 @@ class UniformDiffusion(nn.Module):
     def reverse_diffusion(self, images, ctxt=None, mask=None):
         # reverse diffusion = sampling
         num_images = images.shape[0]
-        step_size = 1.0 / self.n_diffusion_steps
+        step_size = 1.0 / self.eval_cfg.n_diffusion_steps
 
         # important line:
         # at the first sampling step, the "noisy image" is pure noise
         # but its signal rate is assumed to be nonzero (min_signal_rate)
         next_noisy_images = images.to(self.device)
-        for step in range(self.n_diffusion_steps):
+        for step in range(self.eval_cfg.n_diffusion_steps):
             noisy_images = next_noisy_images.detach()
 
             # separate the current noisy image to its components
@@ -120,29 +172,14 @@ class UniformDiffusion(nn.Module):
         pred_images = (noisy_images - noise_rates * pred_noises) / signal_rates
 
         return pred_noises, pred_images
-
-    # def train_step(self, images, ctxt=None, mask=None):
-    #     # normalize images to have standard deviation of 1, like the noises
-    #     self.optimizer.zero_grad(set_to_none=True)
-        
-    #     log = self._shared_step(images, ctxt, mask, training=True)
-        
-    #     # apply gradients
-    #     log["noise_loss"].backward()
-    #     self.optimizer.step()
-
-    #     # track the exponential moving averages of weights
-    #     with T.no_grad():
-    #         self.ema_network.ema(self.network.state_dict(), self.diffusion_config.ema)
-
-    #     return {i:j.cpu().detach().numpy() for i,j in log.items()}
-        
         
     def _shared_step(self, images:T.Tensor, ctxt:T.Tensor=None,
                      mask:T.Tensor=None, training:bool=True):
         
-        # the exponential moving average weights are used at evaluation 
+        # Move tensors to device 
         images= images.to(self.device)
+        if mask is not None:
+            mask=mask.to(self.device)
             
         noises = T.randn_like(images)
 
@@ -159,7 +196,7 @@ class UniformDiffusion(nn.Module):
         noisy_images = signal_rates * images + noise_rates * noises
         pred_noises, pred_images = self.denoise(
             noisy_images, noise_rates, signal_rates, training=training,
-            ctxt=ctxt, mask=mask.to(self.device)
+            ctxt=ctxt, mask=mask
         )
         pred_images = pred_images.detach()
 
@@ -222,21 +259,35 @@ class ElucidatingDiffusion(Solvers):
             network = self.ema_network
             network.eval()
         
-        # if (ctxt is not None) & (self.normalizer is not None):
-        #     ctxt = self.normalizer(ctxt)
+        # norm conditions
+        if ("cnts" in ctxt) & (self.ctxt_normaliser is not None):
+            ctxt["cnts"] = self.ctxt_normaliser(ctxt["cnts"],
+                                                mask=ctxt["mask"])
+        
+        if ("scalars" in ctxt) & (self.ctxt_scalar_normaliser is not None):
+            ctxt["scalars"] = self.ctxt_scalar_normaliser(ctxt["scalars"])
 
         # preconditions
         c_skip, c_out, c_input = self.precondition(sigma)
+        
+        # embedding 
+        sigma = self.embedding(sigma.to(self.device), len(images.shape))
+
+        # add noise embedding to ctxt
+        if "scalars" in ctxt:
+            ctxt["scalars"] = T.concat([sigma.squeeze(1), ctxt["scalars"]],1)
+        else:
+            ctxt["scalars"] = sigma.squeeze(1)
 
         # predict noise component and calculate the image component using it
-        network_output = network(c_input*images,sigma, ctxt=ctxt.copy(), mask=mask).cpu()
+        network_output = network(c_input*images, ctxt=ctxt, mask=mask).cpu()
         
         return c_skip*images+c_out*network_output
     
     def _shared_step(self, images:T.Tensor, ctxt:T.Tensor=None,
                      mask:T.Tensor=None, training:bool=True
                      )->T.Tensor:
-
+        ctxt={} if ctxt is None else ctxt
         # the exponential moving average weights are used at evaluation
         if training:
             network = self.network
@@ -244,8 +295,19 @@ class ElucidatingDiffusion(Solvers):
             network = self.ema_network
             network.eval()
 
+        # Pass through the normalisers
+        images = self.normaliser(images, mask, training=training)
+        if "cnts" in ctxt:
+            ctxt["cnts"] = self.ctxt_normaliser(ctxt["cnts"],
+                                                mask = ctxt["mask"],
+                                                training=training)
+        if "scalars" in ctxt:
+            ctxt["scalars"] = self.ctxt_scalar_normaliser(ctxt["scalars"],
+                                                          training=training)
+
+
         # sample noise distribution
-        sigma_noise = self.sample_time(len(images), len(images.shape))
+        sigma_noise = self.sample_time(len(images), len(images.shape)).to(images.device)
 
         # calculate preconditions
         c_skip, c_out, c_input = self.precondition(sigma_noise)
@@ -258,10 +320,20 @@ class ElucidatingDiffusion(Solvers):
 
         # scaled target
         scaled_target = (images-c_skip*noisy_images)/c_out
+        
+        # embedding
+        sigma_noise = self.embedding(sigma_noise.to(self.device), len(images.shape))
+        
+        # add noise embedding to ctxt
+        if "scalars" in ctxt:
+            ctxt["scalars"] = T.concat([sigma_noise.squeeze(1), ctxt["scalars"]],1)
+        else:
+            ctxt["scalars"] = sigma_noise.squeeze(1)
+            
 
         with T.autocast(device_type=self.device, dtype=T.float16):
             # predict noise component and calculate the image component using it
-            pred_images = network(c_input*noisy_images,sigma_noise, ctxt=ctxt, mask=mask)
+            pred_images = network(c_input*noisy_images, ctxt=ctxt, mask=mask)
             # assert pred_images.dtype is T.float16
 
             # loss function
@@ -272,8 +344,8 @@ class ElucidatingDiffusion(Solvers):
 
     def reverse_diffusion(self, images, ctxt=None, mask=None):
         #heuns solver
-        sigma_steps = self.sample_sigma(np.arange(self.n_diffusion_steps),
-                                        N=self.n_diffusion_steps,
+        sigma_steps = self.sample_sigma(np.arange(self.eval_cfg.n_diffusion_steps),
+                                        N=self.eval_cfg.n_diffusion_steps,
                                        n_imgs=len(images)
                                        ).permute(1,0,2,3).float()
 

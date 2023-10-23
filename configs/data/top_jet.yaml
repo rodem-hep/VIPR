@@ -1,0 +1,41 @@
+
+data_name: jet
+datatype: pc
+
+train:
+  _target_: src.physics.MultiJetFiles
+  _convert_: object
+  jet_path: /srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/path_lists.yaml
+  sub_col: train
+  n_files: null
+
+  jet_physics_cfg:
+    max_cnstits: 100
+    max_ctxt_cnstits: 200
+    datatype: ${data.datatype}
+    # variables used
+    target_names: ['eta', 'phi', 'pt']
+    # ctxt variables
+    jet_scalars_cols: ["eta", "phi", "pt", "mass", "mu", "n_cnts"]
+    # if the pileup path in defined - it will use pileup path
+    pileup_path: ["/home/users/a/algren/scratch/diffusion/pileup/pileup.csv", ]
+    pileup_dist_args:
+      mu: 50
+      std: 10
+
+valid:
+  _target_: src.physics.JetPhysics
+  _convert_: object
+
+  jet_path: ${..train.jet_path}
+  sub_col: valid
+  n_files: 5
+
+  pileup_path: ${..train.jet_physics_cfg.pileup_path}
+
+  target_names: ${..train.jet_physics_cfg.target_names}
+  jet_scalars_cols: ${..train.jet_physics_cfg.jet_scalars_cols}
+
+  pileup_dist_args: ${..train.jet_physics_cfg.pileup_dist_args}
+  max_cnstits: ${..train.jet_physics_cfg.max_cnstits}
+  max_ctxt_cnstits: ${..train.jet_physics_cfg.max_ctxt_cnstits}

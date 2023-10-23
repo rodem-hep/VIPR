@@ -1,30 +1,20 @@
-_target_: src.models.pc_model.PileUpRemoval
-_convert_: object
-
-device: ${device}
-
-# input dims
-vkq_dims: 3
-ctxt_dims: null
-upscale_dims: 128
-
-# network scaling
-embedding_cfg:
-  embedding_dims: 128
-  embedding_min_frequency: 0
-  embedding_max_frequency: 80
-
-
-dense_cfg:
-  act_str: gelu
-  n_layers: 3
-  norm: layer
-
-trans_cfg:
+decoder_cfg:
+  _target_: tools.transformers.transformer.TransformerDecoder
+  _partial_: true
   model_dim: ${..upscale_dims}
   dense_cfg: ${..dense_cfg}
+  num_layers: 1
   mha_config: 
     attn_heads: 8
-  num_layers: 4
   ctxt_dim: ${..upscale_dims} 
   init_self_attn: True
+
+encoder_cfg: 
+  _target_: tools.transformers.transformer.TransformerEncoder
+  _partial_: true
+  model_dim: ${..upscale_dims}
+  dense_cfg: ${..dense_cfg}
+  num_layers: 1
+  mha_config: 
+    attn_heads: 8
+  ctxt_dim: ${..upscale_dims}

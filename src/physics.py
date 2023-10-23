@@ -1,12 +1,13 @@
 import pyrootutils
 root = pyrootutils.setup_root(search_from=__file__, pythonpath=True)
 
-from typing import Union
+from typing import Union, List
 
 from tqdm import tqdm
 from glob import glob
 import os
 import copy
+from scipy.stats import norm
 
 import numpy as np
 import torch as T
@@ -18,7 +19,8 @@ from tools import misc
 from src.utils import undo_log_squash, log_squash
 from src.eval_utils import EvaluateFramework
 from src.prepare_data import fill_data_in_pc, matrix_to_point_cloud
-from src.datamodule import MultiFileDataset, MultiStreamDataLoader, chunks
+from tools.datamodule.pipeline import pc_2_image 
+from tools.datamodule.datamodule import MultiFileDataset, MultiStreamDataLoader, chunks
 from tools.transformations import log_squash, undo_log_squash
 
 
@@ -59,45 +61,66 @@ def jet_variables(sample, mask):
     
     return jet_vars
 
+class PileupDist:
+    def __init__(self, mu, std):
+        self.mu=mu
+        self.std=std
+
+    def __call__(self, size):
+        return np.abs(np.int64(np.random.normal(self.mu, self.std, size)))
+
 class JetPhysics(EvaluateFramework, Dataset):
-    # TODO maybe dangerous that it is both a eval framework and dataloader
-    def __init__(self, jet_path:Union[dict, list], target_names:list,
-                 jet_scalars_cols:list=None, pileup_path:Union[str, list]=None, **kwargs):
-        self.n_files = kwargs.get("n_files", None)
-        if ".yaml" in jet_path:
-            self.jet_path=misc.load_yaml(jet_path)[f"{kwargs['sub_col']}_path"][:self.n_files] # sub_col is required
-        else:
-            self.jet_path=jet_path
+    def __init__(self, jet_path: Union[dict, list], target_names: List[str],
+                 jet_scalars_cols: List[str] = None,
+                 pileup_path: Union[str, list] = None, **kwargs):
+        super().__init__()  # Initialize parent classes if needed
 
-        self.standardize_bool = kwargs.get("standardize_bool", False)
-        self.loader_config = kwargs.get("loader_config", {})
-        self.max_pileup_size = kwargs.get("max_pileup_size", 400)
-        self.noise_to_pileup = kwargs.get("noise_to_pileup", 0.0)
-        self.n_pileup_to_select = kwargs.get("n_pileup_to_select", 0)
-        self.max_cnstits = kwargs.get("max_cnstits", None)
-        self.jet_norms = kwargs.get("jet_norms", None)
-        self.mean = kwargs.get("mean", None)
-        self.std = kwargs.get("std", None)
-        
-        self.pileup_cnts = kwargs.get("pileup_cnts", None)
-        self.pileup_mask_cnts = kwargs.get("pileup_mask_cnts", None)
-        
-
-        self.pileup_path=pileup_path
-        self.target_names = target_names
-        self.col_jets = [f"jet_{i}"for i in JET_COL]
-        self.hist_kwargs={"percentile_lst":[0, 99.5],
-                     "style": {"bins": 40, "histtype":"step"},
-                     "dist_styles":[
-                        {"marker":"o", "color":"black", "label":"Truth", "linewidth":0},
-                        {"linestyle": "dotted","color":"blue", "label":"Generated", "drawstyle":"steps-mid"}]
-                     }
-        self._MeV_to_GeV = ["px", "py", "pz", "pt"]
-        self.mean, self.std = {}, {}
-        self.ctxt = {}
-        
-
+        # Initialize instance variables
         self.jet_scalars_cols = jet_scalars_cols
+        self.pileup_path = pileup_path
+        self.target_names = target_names
+        self.jet_path = jet_path
+
+        # Set default values for optional arguments using kwargs.get()
+        self.n_files = kwargs.get("n_files")
+        self.loader_config = kwargs.get("loader_config", {})
+        self.max_ctxt_cnstits = kwargs.get("max_ctxt_cnstits", None)
+        self.max_cnstits = kwargs.get("max_cnstits")
+
+        self.noise_to_pileup = kwargs.get("noise_to_pileup", 0.0)
+        self.pileup_dist = PileupDist(**kwargs.get(
+            "pileup_dist_args",{"mu": 50, "std": 10})
+                                      )
+        self.jet_norms = kwargs.get("jet_norms")
+        self.datatype = kwargs.get("datatype", "pc")
+        self.pileup_cnts = kwargs.get("pileup_cnts")
+        self.pileup_mask_cnts = kwargs.get("pileup_mask_cnts")
+        self._MeV_to_GeV = kwargs.get("MeV_2_GeV", ["px", "py", "pz", "pt"])
+        self.image_style_kwargs = kwargs.get("image_style_kwargs",
+                                       {"range":[[-2.6, 2.6], [-2.6, 2.6]],
+                                        "bins":64})
+
+        # Initialize other instance variables
+        self.col_jets = [f"jet_{i}" for i in JET_COL]
+        self.hist_kwargs = {
+            "percentile_lst": [0, 99.5],
+            "style": {"bins": 40, "histtype": "step"},
+            "dist_styles": [
+                {"marker": "o", "color": "black", "label": "Truth", "linewidth": 0},
+                {"linestyle": "dotted", "color": "blue", "label": "Generated", "drawstyle": "steps-mid"},
+            ]
+        }
+        # self.hist_kwargs_diff = copy.deepcopy(self.hist_kwargs)
+        # self.hist_kwargs_diff["dist_styles"] =  [
+        #         {"linestyle": "dotted", "color": "blue", "label": "MAE(truth, gen)",
+        #          "drawstyle": "steps-mid"},
+        #     ]
+
+        # Load jet path if it's a YAML file
+        if ".yaml" in self.jet_path:
+            self.jet_path = misc.load_yaml(self.jet_path)[f"{kwargs['sub_col']}_path"][:self.n_files]
+        else:
+            self.jet_path = jet_path
 
         if jet_path is not None:
             self._load_data()
@@ -120,6 +143,8 @@ class JetPhysics(EvaluateFramework, Dataset):
 
         # calculate global jet variables
         jet_vars = self.physics_properties(cnts_vars[..., col_cnts_bool], mask_cnts)
+        
+        jet_vars["n_cnts"] = mask_cnts.sum(1)
 
         return cnts_vars, mask_cnts, _max_cnstits, n_pc, col_cnts, jet_vars
 
@@ -131,8 +156,7 @@ class JetPhysics(EvaluateFramework, Dataset):
 
         if self.max_cnstits is None:
             self.max_cnstits = self._max_cnstits
-            self.max_pileup_size = self._max_cnstits
-        
+            
         self.col_cnts = np.array([f"cnts_{i}"for i in self.col_cnts])
         
         # which columns to defuse
@@ -144,10 +168,24 @@ class JetPhysics(EvaluateFramework, Dataset):
 
         # only to calculate mean/std
         self.cnts_vars_rel = self.relative_pos(
-            self.cnts_vars[..., self.col_cnts_bool].copy(),self.jet_vars)
+            self.cnts_vars[..., self.col_cnts_bool].copy(),self.jet_vars,
+            mask=self.mask_cnts)
+        
+        # print(f"ratio: {mask_dR.mean()}")
+        
+        # apply the dR cut
+        # (self.jet_vars, self.cnts_vars, self.cnts_vars_rel, self.mask_cnts,
+        #  self.n_pc) = (
+        #     self.jet_vars[mask_dR],
+        #     self.cnts_vars[mask_dR],
+        #     self.cnts_vars_rel[mask_dR],
+        #     self.mask_cnts[mask_dR],
+        #     mask_dR.sum()
+        #     )
+     
 
-        self.mean["images"], self.std["images"] = self.calculate_norms(self.cnts_vars_rel,
-                                                                    self.mask_cnts)
+        # self.mean["images"], self.std["images"] = self.calculate_norms(self.cnts_vars_rel,
+        #                                                             self.mask_cnts)
         
         # remove unused columns
         self.cnts_vars = self.cnts_vars[..., self.col_cnts_bool]
@@ -155,61 +193,56 @@ class JetPhysics(EvaluateFramework, Dataset):
         # get jet data
         if (self.pileup_path is not None):
             if (self.pileup_cnts is None):
-                self.pileup_cnts, self.pileup_mask_cnts, _,_, self.n_pileup_pc,_ =load_csv(self.pileup_path)
-                # self.pileup_mean, self.pileup_std = self.calculate_norms(self.pileup_cnts[..., self.col_cnts_bool],
-                #                                                 self.pileup_mask_cnts)
+                
+                # import pileup events
+                self.pileup_cnts, self.pileup_mask_cnts, _,_, self.n_pileup_pc,_ = load_csv(self.pileup_path)
                 
                 # remove unused columns
                 self.pileup_cnts = self.pileup_cnts[..., self.col_cnts_bool]
-                
-                # combine means/std TODO ask Johnny or chris how to do this?
-                # Pileup should also contribute to mean/std right?
 
-                # self.mean["cnts"] = (self.mean["cnts"]*self.mask_cnts.sum()+
-                #                      pileup_mean*self.pileup_mask_cnts.sum())/(self.mask_cnts.sum()+self.pileup_mask_cnts.sum())
-                # self.std["cnts"] = (self.std["cnts"]*self.mask_cnts.sum()+
-                #                      pileup_std*self.pileup_mask_cnts.sum())/(self.mask_cnts.sum()+self.pileup_mask_cnts.sum())
-            
-            self.ctxt["pileup"] = {"cnts": self.pileup_cnts,
-                                    "mask": self.pileup_mask_cnts}
+            else:
+                self.n_pileup_pc = len(self.pileup_cnts)
     
     def get_pileup_data(self):
         return self.pileup_cnts, self.pileup_mask_cnts
-
-    @staticmethod
-    def calculate_norms(cnts_arr: np.ndarray, mask:np.ndarray):
-        mean = cnts_arr[mask].mean(0)[None, :]
-        std = cnts_arr[mask].std(0)[None, :]
-        return mean, std
     
     @staticmethod
-    def relative_pos(cnts_vars, jet_vars, reverse=False):
+    def relative_pos(cnts_vars, jet_vars, mask, reverse=False):
         "Calculate relative position to the jet"
         cnts_vars_rel = copy.deepcopy(cnts_vars)
         if reverse:
+            # from relative position to abs position
             for nr, i in enumerate(['eta', 'phi']):
                 cnts_vars_rel[..., nr] += jet_vars[:, nr][:,None]
                 if i in "phi":
                     cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
                     cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
 
-            cnts_vars_rel[..., nr+1] = np.exp(cnts_vars_rel[..., nr+1])-1
-            # cnts_vars_rel[..., nr+1] = cnts_vars_rel[..., nr+1]
+            cnts_vars_rel[..., nr+1] = np.exp(cnts_vars_rel[..., nr+1])
+            # cnts_vars_rel[..., nr+1] = (np.exp(cnts_vars_rel[..., nr+1])*
+                                            #   jet_vars[:, nr+1][:,None])
+            mask_dR=None
         else:
-
+            # from abs position to relative position
             for nr, i in enumerate(['eta', 'phi']):
                 cnts_vars_rel[..., nr] -= jet_vars[i].values[:,None]
                 if i in "phi":
                     cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
                     cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
 
-            cnts_vars_rel[..., nr+1] = np.log(cnts_vars_rel[..., nr+1]+1)
-            # cnts_vars_rel[..., nr+1] = np.log(cnts_vars_rel[..., nr+1]/#+1/
-            #                                   jet_vars["pt"].values[:,None]
-            #                                   )
+            # log squash pT
+            cnts_vars_rel[..., nr+1][mask] = np.clip(cnts_vars_rel[..., nr+1][mask],
+                                                     a_min=1e-8, a_max=None)
+
+            cnts_vars_rel[..., nr+1][mask] = np.log(cnts_vars_rel[..., nr+1][mask])
+            
             cnts_vars_rel[..., nr+1] = np.nan_to_num(cnts_vars_rel[..., nr+1], -1)
 
-        return cnts_vars_rel
+
+        if mask is not None:
+            cnts_vars_rel[~mask]=0
+        
+        return cnts_vars_rel#, mask_dR
 
     def physics_properties(self, sample, mask):
         # calculate eta/phi/pT and jet variables
@@ -239,25 +272,38 @@ class JetPhysics(EvaluateFramework, Dataset):
 
         jet_vars = self.jet_vars.iloc[idx_jet:idx_jet+1]
         
-        idx = np.random.choice(np.arange(0, self.n_pileup_pc,1), self.n_pileup_to_select)
+        # generate mu
+        mu = self.pileup_dist(1)
+        
+        # selecting mu number of pileup events
+        idx = np.random.choice(np.arange(0, self.n_pileup_pc,1), mu)
 
-        pileup_cnts = self.pileup_cnts[idx].copy()
-        pileup_cnts_mask = self.pileup_mask_cnts[idx]
+        pileup_cnts = self.pileup_cnts[idx].copy()[self.pileup_mask_cnts[idx]]
+        
+        # flip in eta        
+        pileup_cnts[..., 0] = pileup_cnts[..., 0]*np.random.choice([-1, 1], len(pileup_cnts))
+        
+        # rotate in phi
+        pileup_cnts[..., 1] += ((2*np.random.rand(len(pileup_cnts))-1)*np.pi)
+        pileup_cnts[..., 1][pileup_cnts[..., 1] >= np.pi] -= 2*np.pi
+        pileup_cnts[..., 1][pileup_cnts[..., 1] < -np.pi] += 2*np.pi
 
-        pileup_cnts_rel = self.relative_pos(pileup_cnts,jet_vars)
+        # get relative position
+        pileup_cnts_rel = self.relative_pos(pileup_cnts[None],jet_vars,
+                                            mask = np.ones((1, len(pileup_cnts)))==1)
 
-        delta_R_mask = np.sqrt(np.sum(pileup_cnts_rel[..., :2]**2, -1))<1
-
-        pileup_mask = delta_R_mask & pileup_cnts_mask
+        # dR cut on the pileup cnts
+        delta_R_mask = np.sqrt(np.sum(pileup_cnts_rel[0][..., :2]**2,-1))<=1
+        
         
         # concat and fill full event matrix
         # TODO should pply be shuffled at some point
         # cnts_vars & pileup_cnts_rel should be shuffle individual and together
         evt_w_pileup = np.concatenate([cnts_vars[mask_cnts_vars],
-                                       pileup_cnts[pileup_mask]],
-                                      0)[:self.max_pileup_size]
+                                       pileup_cnts[delta_R_mask]],
+                                      0)[:self.max_ctxt_cnstits]
         
-        full_event = np.ones((self.max_pileup_size, cnts_vars.shape[-1]))*-999
+        full_event = np.ones((self.max_ctxt_cnstits, cnts_vars.shape[-1]))*-999
         full_event[:len(evt_w_pileup)] = evt_w_pileup
         mask_events = np.any(full_event!=-999, -1)
 
@@ -265,42 +311,20 @@ class JetPhysics(EvaluateFramework, Dataset):
         new_jet_vars = self.physics_properties(full_event, mask_events)
 
         # do not move jet
-        new_jet_vars[["eta", "phi"]] = jet_vars[["eta", "phi"]].values
+        new_jet_vars[["eta", "phi", "n_cnts"]] = jet_vars[["eta", "phi", "n_cnts"]].values
 
-        # relative coords
-        full_event = self.relative_pos(full_event[None],new_jet_vars)[0]
+        # input mu into jet vars
+        new_jet_vars["mu"] = mu
         
-        return full_event, mask_events, new_jet_vars
+        # relative coords
+        full_event = self.relative_pos(full_event[None],new_jet_vars,
+                                       mask=mask_events[None])
+        
+        return full_event[0], mask_events, new_jet_vars
 
     def get_ctxt_shape(self):
-        return {"cnts": [self.max_pileup_size, len(self.target_names)],
+        return {"cnts": [self.max_ctxt_cnstits, len(self.target_names)],
                 "scalars": len(self.jet_scalars_cols)}
-    
-    def get_diffusion_data(self):
-        return (self.cnts_vars_rel, self.mask_cnts, self.jet_vars.values,
-                self.min_cnstits, self.max_cnstits, self.n_pc)
-    
-    # @classmethod
-    # def create_new_loader(cls, paths:list) -> None:
-    def _load_new_data(self, paths:list) -> None:
-        (self.cnts_vars, self.mask_cnts, self._max_cnstits, self.n_pc,
-         self.col_cnts, self.jet_vars) = self.load_jet_cnts(paths)
-
-        # relative cnts to the jet
-        self.cnts_vars_rel = self.relative_pos(
-            self.cnts_vars[..., self.col_cnts_bool].copy(),self.jet_vars
-            )
-        # data = JetPhysics([path], target_names=["eta", "phi", "pt"],
-        #                     max_cnstits=cls.max_cnstits,
-        #                     jet_scalars_cols = ["eta", "phi", "pt", "mass"],
-        #                     jet_norms=cls.dataset.jet_norms,
-        #                     std=cls.dataset.std, mean=cls.dataset.mean
-        #                     )
-        # return cls([paths], target_names=["eta", "phi", "pt"],
-        #                     max_cnstits=cls.max_cnstits,
-        #                     jet_scalars_cols = ["eta", "phi", "pt", "mass"],
-        #                     jet_norms=cls.dataset.jet_norms,
-        #                     std=cls.dataset.std, mean=cls.dataset.mean)
 
     def train_dataloader(self):
         return DataLoader(self, **self.loader_config)
@@ -313,9 +337,16 @@ class JetPhysics(EvaluateFramework, Dataset):
         test_loader_config.pop("pin_memory_device", None)
         # test_loader_config["batch_size"]=512
         return DataLoader(self, **test_loader_config)
+    
+    def pc_2_image(self, data):
+        return pc_2_image(data, style_kwargs=self.image_style_kwargs)
 
     def _shape(self):
-        return [self.max_cnstits, len(self.target_names)]
+        return {"images": [self.max_cnstits,
+                           len(self.target_names)],
+                "ctxt_images": [self.max_ctxt_cnstits, 
+                                len(self.target_names)],
+                "ctxt_scalars": [len(self.jet_scalars_cols)]}
     
     def __len__(self):
         return self.n_pc
@@ -327,125 +358,178 @@ class JetPhysics(EvaluateFramework, Dataset):
             yield self.__getitem__(idx)
 
     def __getitem__(self, idx):
-        data = {}
-        if ("pileup" in self.ctxt): # & (self.n_pileup_to_select>0):
+        jet_var=None
+        data = {"images": None}
+        if self.pileup_cnts is not None: # & (self.n_pileup_to_select>0):
             data["ctxt"] = {}
             
             # add pileup and recalculate jet vars
-            if False:
-                event, mask, jet_data = self.concat_pileup(idx,
+            if True:
+                event, mask, jet_var = self.concat_pileup(idx,
                                                 cnts_vars=self.cnts_vars[idx],
                                                 mask_cnts_vars=self.mask_cnts[idx])
             else:
-                jet_data = self.jet_vars.iloc[idx:idx+1]
+                jet_var = self.jet_vars.iloc[idx:idx+1]
                 mask = self.mask_cnts[idx]
-                event = self.relative_pos(self.cnts_vars[idx][None],jet_data)[0]
+                event = self.relative_pos(self.cnts_vars[idx][None],jet_var)
+                event[~mask]=0
 
             # add data to dict
-            data["images"] = self.relative_pos(self.cnts_vars[idx][None],jet_data)[0]
-            data["images"] = np.float32((data["images"] -self.mean["images"])/self.std["images"])
             data["mask"] =  self.mask_cnts[idx]
+            data["images"] = self.cnts_vars_rel[idx]
+            # data["images"] = self.relative_pos(self.cnts_vars[idx][None],jet_var)[0]
+            data["images"][~data["mask"]]=0
 
-            data["ctxt"]["cnts"] = np.float32((event-self.mean["images"])/self.std["images"])
+            data["images"] = np.float32(data["images"])
+
+            # insert cnts into ctxt
+            data["ctxt"]["cnts"] = np.float32(event)
             data["ctxt"]["mask"] = mask
+            data["ctxt"]["cnts"][~data["ctxt"]["mask"]]=0
 
-            jet_var = (jet_data-self.jet_norms["mean"])/self.jet_norms["std"]
-            jet_var = jet_var[self.jet_scalars_cols].values
-            data["ctxt"]["scalars"] = np.float32(np.ravel(jet_var))
         else:
             cnts_vars_rel = self.relative_pos(
-                self.cnts_vars[idx],self.jet_vars.iloc[idx:idx+1]
+                self.cnts_vars[idx][None],self.jet_vars.iloc[idx:idx+1],
+                mask=self.mask_cnts[idx]
                 ) # TODO i think shape is wrong
-            data["images"] = np.float32(
-                (cnts_vars_rel-self.mean["images"])/self.std["images"]
-                )
+            data["images"] = np.float32(cnts_vars_rel)
             data["mask"] = self.mask_cnts[idx]
 
-            if self.jet_scalars_cols is not None:
+        # Get scalar ctxt vars
+        if self.jet_scalars_cols is not None:
+            # Ensure that ctxt is present
+            if "ctxt" not in data:
                 data["ctxt"] = {}
-                jet_var = self.jet_vars[self.jet_scalars_cols].iloc[idx:idx+1].values
-                jet_var = ((jet_var-self.jet_norms["mean"][self.jet_scalars_cols].values)/
-                        self.jet_norms["std"][self.jet_scalars_cols].values)
-                data["ctxt"]["scalars"] = np.float32(np.ravel(jet_var))
+
+            # check if jet_var is missing
+            if jet_var is None:
+                jet_var = self.jet_vars.iloc[idx:idx+1]
+
+            # Fill in Jet scalars
+            data["ctxt"]["scalars"] = np.float32(
+                np.ravel(jet_var[self.jet_scalars_cols])
+                )
+        
+        # convert to image
+        if "image" in self.datatype:
+            data["images"] = self.pc_2_image(data["images"])[None]
+            data.pop("mask")
+            if "cnts" in data["ctxt"]:
+                data["ctxt"]["cnts"] = self.pc_2_image(data["ctxt"]["cnts"])[None]
+                data["ctxt"].pop("mask")
 
         return data
     
-    def __call__(self, gen_data, mask, ctxt):
-        log={}
+    def __call__(self, gen_data, mask, ctxt, **kwargs):
+        log=kwargs.get("log", {})
         if isinstance(gen_data, T.Tensor):
             gen_data = gen_data.cpu().detach().numpy()
         if isinstance(mask, T.Tensor):
             mask = mask.cpu().detach().numpy()
+
         # renorm
         if "scalars" in ctxt:
-            log = self.plot_marginals(((self.jet_vars[self.jet_scalars_cols].values[:len(ctxt["scalars"])]
-                                       -self.jet_norms["mean"][self.jet_scalars_cols].values)
-                                      /self.jet_norms["std"][self.jet_scalars_cols].values),
-                                    ctxt["scalars"],
-                                    col_name=[f"jet_normed_{i}" for i in self.jet_scalars_cols],
-                                    hist_kwargs=self.hist_kwargs, log=log)
-            ctxt_scalars = (ctxt["scalars"]
-                            *self.jet_norms["std"][self.jet_scalars_cols].values
-                            +self.jet_norms["mean"][self.jet_scalars_cols].values)
-
+            ctxt_scalars = ctxt["scalars"]
             if isinstance(ctxt_scalars, T.Tensor):
                 ctxt_scalars = ctxt_scalars.cpu().detach().numpy()
+            
+            # Ensure that columns in self.jet_vars
+            scalars_cols = np.array(self.jet_scalars_cols)[np.in1d(self.jet_scalars_cols, self.jet_vars.keys())]
+            
+            # also remove n_cnts
+            scalars_cols = scalars_cols[~np.in1d(scalars_cols, ["n_cnts"])]
+
+            # Plot raw ctxt
+            log = self.plot_marginals(
+                self.jet_vars[scalars_cols].values[:len(ctxt["scalars"])],
+                ctxt_scalars,col_name=[f"jet_ctxt_{i}" for i in scalars_cols],
+                hist_kwargs=self.hist_kwargs, log=log
+                )
 
             # reverse relative
-            gen_cnts_vars = self.relative_pos(gen_data, ctxt_scalars, reverse=True)
+            gen_cnts_vars = self.relative_pos(gen_data, ctxt_scalars, mask=mask, reverse=True)
+            
+            # calculate jet var
             generated_jet_vars = self.physics_properties(gen_cnts_vars, mask==1)
 
-            log = self.plot_marginals(self.jet_vars[self.jet_scalars_cols].values[:len(generated_jet_vars)],
-                                    generated_jet_vars[self.jet_scalars_cols].values,
-                                    col_name=[f"jet_{i}" for i in self.jet_scalars_cols],
-                                    hist_kwargs=self.hist_kwargs, log=log)
+            # Plot difference between jet var & generated jet var
+            log = self.plot_marginals(
+                self.jet_vars[scalars_cols].values[:len(generated_jet_vars)],
+                generated_jet_vars[scalars_cols].values,
+                col_name=[f"jet_generated_{i}" for i in scalars_cols],
+                hist_kwargs=self.hist_kwargs, log=log)
 
         gen_cnts_flatten = gen_cnts_vars[mask==1]
 
+        # Plot marginals of cnts
         log = self.plot_marginals(self.cnts_vars[self.mask_cnts][:len(gen_cnts_flatten)],
                                   gen_cnts_flatten,
                                   col_name=self.col_cnts[self.col_cnts_bool], log=log,
                                   hist_kwargs=self.hist_kwargs)
 
+        # Plot centralised marginals of cnts
         log = self.plot_marginals(self.cnts_vars_rel[self.mask_cnts][:len(gen_cnts_flatten)],
                                   gen_data[mask==1],
                                   col_name=[f"{i}_rel" for i in self.col_cnts[self.col_cnts_bool]], log=log,
                                   hist_kwargs=self.hist_kwargs)
 
+        # proper styling for the images
+        style={"range":[[-2.5, 2.5], [-np.pi, np.pi]], "bins":64}
+
+        # plot pc as image
+        gen_images = np.clip(np.log(pc_2_image(gen_cnts_vars[:100], style)+1), 0, 1)
+
+        # Upload images
+        log.update(self.plot_images(gen_images[..., None], name="gen_image"))
+        
+        # create & upload ctxt & truth
+        if kwargs.get("n_epoch", 0)==0:
+            ctxt_cnts = self.relative_pos(ctxt["cnts"], ctxt_scalars, mask=ctxt["mask"],
+                                          reverse=True).numpy()
+            truth_images = np.clip(np.log(pc_2_image(self.cnts_vars[:100], style)+1), 0,1)
+            ctxt_images = np.clip(np.log(pc_2_image(ctxt_cnts[:100], style)+1), 0, 1)
+            log.update(self.plot_images(truth_images[..., None], name="truth_image"))
+            log.update(self.plot_images(ctxt_images[..., None], name="ctxt_image"))
+
         return log
     
-class JetLoader(JetPhysics):
-    def __init__(self, path:str, sub_col:str, target_names:list,
-                 jet_scalars_cols:list=None, **kwargs):
-        paths = misc.load_yaml(path)[sub_col+"_path"]
-        super().__init__(None, target_names=target_names, jet_scalars_cols=jet_scalars_cols,
-                         **kwargs)
-        self.paths=paths
-        self.train_data = self.load_data(paths[:10])
+# class JetLoader(JetPhysics):
+#     def __init__(self, path:str, sub_col:str, target_names:list,
+#                  jet_scalars_cols:list=None, **kwargs):
+#         paths = misc.load_yaml(path)[sub_col+"_path"]
+#         super().__init__(None, target_names=target_names, jet_scalars_cols=jet_scalars_cols,
+#                          **kwargs)
+#         self.paths=paths
+#         self.train_data = self.load_data(paths[:10])
            
-    def load_data(self, path):
-        # get jet data
-        self._load_data(path)
+#     def load_data(self, path):
+#         # get jet data
+#         self._load_data(path)
 
 def load_csv(paths: list, duplicate_number=False, max_cnts:int=None, verbose=False):
     "Load list of csv paths"
     df=[]
-    usecols=["jetnumber ", " px ", " py ", " pz"]
     for i in tqdm(paths, disable=not verbose):
+        _df = pd.read_csv(i, dtype=np.float32, engine="pyarrow")
+        _df.rename(columns=lambda x: x.strip(), inplace=True)
         if duplicate_number & (len(df)>0):
-            _df = pd.read_csv(i, dtype=np.float32, engine="pyarrow")#, usecols=usecols)
-            _df["jetnumber "] = _df["jetnumber "]+df[-1]["jetnumber "].iloc[-1]+1
-            df.append(_df)
-        else:
-            df.append(pd.read_csv(i, dtype=np.float32,# engine="pyarrow",
-                                #   usecols=usecols
-                                  ))
+            _df["jetnumber"] = _df["jetnumber"]+df[-1]["jetnumber"].iloc[-1]+1
+        df.append(_df)
+
     df = pd.concat(df, axis=0)
-    df=df.rename(columns={i:i.replace(" ", "") for i in df.columns})
+
     event_nr_columns = [i for i in df.columns if "number" in i ]
     if all(np.in1d(["px", "py", "pz"],df.columns)):
-        
+        # calculate eta/phi/pT
         df["eta"],df["phi"],df["pt"]= detector_dimensions(df[["px", "py", "pz"]].values)
+    
+    #pT cut
+    if df["pt"].max()>1000:
+        df = df[df["pt"]>500] # pT in MeV
+    else:
+        df = df[df["pt"]>0.5] # pT in GeV
+    
+    # create PC
     cnts_df, mask = matrix_to_point_cloud(df.values, df[event_nr_columns].values, num_per_event_max=max_cnts)
 
     return cnts_df, mask, mask.sum(1).min(), mask.shape[-1], len(cnts_df), df.columns
@@ -520,24 +604,19 @@ def numpy_locals_to_mass_and_pt(csts: np.ndarray, mask: np.ndarray,
     return np.vstack([jet_px, jet_py, jet_pz, jet_eta, jet_phi, jet_pt, jet_m]).T
 
 class MultiJetFiles(MultiStreamDataLoader):
-    
-    def __init__(self, jet_path:str, target_names:list, sub_col:str, n_files:list=None,
-                 jet_scalars_cols:list=None, max_cnstits:int=None, loader_config:dict=None,
-                 **kwargs):
+    def __init__(self, jet_path:str, sub_col:str, jet_physics_cfg:dict,
+                 n_files:list=None,  loader_config:dict=None, **kwargs):
         self.jet_path=jet_path
-        self.max_cnstits=max_cnstits
         self.sub_col=sub_col
         self.n_files=n_files
-        self.target_names=target_names
-        self.jet_scalars_cols=jet_scalars_cols
         self.loader_config=loader_config
+        self.jet_physics_cfg = jet_physics_cfg
         if self.loader_config is None:
             self.loader_config={}
-        if self.jet_scalars_cols is None:
-            self.jet_scalars_cols={}
-        
-        self.paths = misc.load_yaml(self.jet_path)
+
         self.num_workers=self.loader_config.pop("num_workers", 1)
+
+        self.paths = misc.load_yaml(self.jet_path)
 
         data_list = self.paths[f"{sub_col}_path"][:n_files]
 
@@ -551,15 +630,13 @@ class MultiJetFiles(MultiStreamDataLoader):
                                      batch_size=self.loader_config["batch_size"],
                                      processing_func=self._process_data)
                     for path in split_data_lst]
-        self.jet_physics_cfg = self.__dict__.copy()
-        self.jet_physics_cfg.pop("jet_path")
         
-        self.jet_physics_cfg.update(kwargs)
         self.dataset = JetPhysics(jet_path = data_list[:kwargs.get("n_valid_files", 4)],
                                   **self.jet_physics_cfg)
+
         loader_config["num_workers"] = 1
-        super().__init__(datasets=datasets,
-                         data_kw=loader_config)
+
+        super().__init__(datasets=datasets, data_kw=loader_config)
 
     def _shape(self): # TODO to be removed
         return self.dataset._shape()
@@ -573,18 +650,12 @@ class MultiJetFiles(MultiStreamDataLoader):
     def get_ctxt_shape(self): # TODO to be removed
         return self.dataset.get_ctxt_shape()
 
-        # return {
-        #     #"cnts": [self.max_pileup_size, len(self.target_names)],
-        #         "scalars": 4
-        #         }
-
     def _process_data(self, paths_lst):
         for path in paths_lst:
             # self.dataset._load_new_data([path])
             data = JetPhysics(jet_path=[path], jet_norms=self.dataset.jet_norms,
-                              std=self.dataset.std, mean=self.dataset.mean,
-                              pileup_cnts = self.dataset.pileup_cnts[:10],
-                              pileup_mask_cnts = self.dataset.pileup_mask_cnts[:10],
+                              pileup_cnts = self.dataset.pileup_cnts,
+                              pileup_mask_cnts = self.dataset.pileup_mask_cnts,
                               **self.jet_physics_cfg
                               )
             for i in data:
@@ -603,13 +674,28 @@ if __name__ == "__main__":
         paths = misc.load_yaml("/srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/path_lists.yaml")
         
         test_path = ["/srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/topjets_518.csv"]
-        physics = JetPhysics(test_path,
-                             loader_config={"batch_size": 256,"num_workers": 4},
-                             target_names=["eta", "phi", "pt"],
-                             jet_scalars_cols=["eta", "phi", "pt", "mass"],
-                             pileup_path=PILEUP_PATH,
-                             n_pileup_to_select=100,
-                             )
+        if True: # count total number of cnts
+            test_path = glob("/srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/*.csv")
+            max_cns=[]
+            size=0
+            nested_lists = [test_path[i:i+10] for i in range(0, len(test_path), 10)]
+            for i in tqdm(nested_lists):
+                physics = JetPhysics(i,
+                                    loader_config={"batch_size": 256,"num_workers": 4},
+                                    target_names=["eta", "phi", "pt"],
+                                    jet_scalars_cols=["eta", "phi", "pt", "mass", "mu"],
+                                    # pileup_path=PILEUP_PATH,
+                                    # datatype="image",
+                                    # pileup_dist_args={"mu":15, "std":5}
+                                    )
+                # data = load_csv(i, len(paths)>1)
+                size+=len(physics)
+                max_cns.append(physics.max_cnstits)
+                break
+            print(max_cns)
+            print(np.max(max_cns))
+            sys.exit()
+        physics.__getitem__(0)
         # sys.exit()
         dataloader  = physics.train_dataloader()
         # data =[]
@@ -625,46 +711,58 @@ if __name__ == "__main__":
         # loader = MultiJetFiles()
         # loader = MultiStreamDataLoader(datasets, data_kw={"batch_size":1024})
         for ep in range(1):
-            multi_data = {"images":[], "scalars":[], "images_ctxt":[], "mask": [],
-                          "mask_ctxt": []}
+            multi_data = {"images":[], "scalars":[], "images_ctxt":[],
+                        #   "mask": [],
+                        #   "mask_ctxt": []
+                          }
             for i in tqdm(dataloader):
                 multi_data["images"].append(i["images"])
-                multi_data["mask"].append(i["mask"])
+                # multi_data["mask"].append(i["mask"])
                 
                 multi_data["images_ctxt"].append(i["ctxt"]["cnts"])
-                multi_data["mask_ctxt"].append(i["ctxt"]["mask"])
+                # multi_data["mask_ctxt"].append(i["ctxt"]["mask"])
                 
                 multi_data["scalars"].append(i["ctxt"]["scalars"])
-                
         for i in multi_data:
             multi_data[i] = T.concat(multi_data[i], 0).numpy()
-        # Combine image channels for each variable
-        bounds = [[-2.6, 2.6], [-2.6, 2.6]]
-        bins = 30
-        nr = 2
-        for i,j in [["images", "mask"], ["images_ctxt", "mask_ctxt"]]:
-            plt.figure(figsize=(8*1.5,6*1.5))
-            cnts = multi_data[i][nr][multi_data[j][nr]]
-            print(f"Tracks: {multi_data[j][nr].sum()}")
-            plt.hist2d(
-                x=cnts[..., 0],
-                y=cnts[..., 1],
-                weights=cnts[..., -1],
-                bins=bins,
-                range=bounds,
-            )
-            plt.xlabel(r"$\Delta \eta$", fontsize=15)
-            plt.ylabel(r"$\Delta \phi$", fontsize=15)
-        # plt.figure()
-        # cnts = multi_data["images_ctxt"][nr][multi_data["mask_ctxt"][nr]]
-        # plt.hist2d(
-        #     x=cnts[..., 0],
-        #     y=cnts[..., 1],
-        #     weights=cnts[..., -1],
-        #     bins=bins,
-        #     range=bounds,
-        # )
-        
+        # if "mask" in multi_data:
+        #     added_cnts = multi_data["mask_ctxt"].sum(1)-multi_data["mask"].sum(1)
+        #     plt.hist(added_cnts, bins=40)
+        #     plt.xlabel("Number of constituents to the pc")
+        #     sys.exit()
+        # # Combine image channels for each variable
+        # bin_range = [[-2.6, 2.6], [-2.6, 2.6]]
+        # bins = 30
+        # nr = 2
+        # for i,j in [["images", "mask"], ["images_ctxt", "mask_ctxt"]]:
+        #     plt.figure(figsize=(8*1.5,6*1.5))
+        #     cnts = multi_data[i][nr][multi_data[j][nr]]
+        #     print(f"Tracks: {multi_data[j][nr].sum()}")
+        #     plt.hist2d(
+        #         x=cnts[..., 0],
+        #         y=cnts[..., 1],
+        #         weights=cnts[..., -1],
+        #         bins=bins,
+        #         range=bounds,
+        #     )
+        #     plt.xlabel(r"$\Delta \eta$", fontsize=15)
+        #     plt.ylabel(r"$\Delta \phi$", fontsize=15)
+        # cnts = multi_data["images"]
+        # data=[]
+        # for i in tqdm(range(len(cnts))):
+        #     images = np.histogram2d(multi_data["images"][i, ...,0],multi_data["images"][i, ...,1], weights=multi_data["images"][i, ...,2],
+        #                             range = [[-2.6, 2.6], [-2.6, 2.6]], bins = 30)
+
+        #     data.append(images)
+        for i in range(5):
+            fig, ax = plt.subplots(1,2)
+            ax[0].imshow(multi_data["images"][i].T,norm="log")
+            ax[1].imshow(multi_data["images_ctxt"][i].T, norm="log")
+            # fig, ax = plt.subplots(1,1)
+            # ax.imshow(multi_data["images"][i].T-multi_data["images_ctxt"][i].T)
+        # pileup_dist = PileupDist(**{"mu": 50, "std": 10})
+        plt.figure()
+        plt.hist(multi_data["scalars"][:, -1], 81)
         # # generate events with pileup
         # idx_jet = 0
         # events_with_pileup, mask = physics.concat_pileup(0)

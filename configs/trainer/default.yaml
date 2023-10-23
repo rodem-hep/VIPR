@@ -1,0 +1,38 @@
+_target_: run.diffusion.DiffusionModel
+# _convert_: object
+
+# evaluate
+eval_cfg:
+  eval_iters: 1 # -1 is off
+  n_diffusion_steps: 20
+
+init_noise:
+  datatype: ${data.datatype} #image
+  # device: ${device}
+  size: 4096
+  shape: 
+    images: 
+    - ${data.train.jet_physics_cfg.max_cnstits}
+    - 3
+
+# embedding
+embedding_cfg:
+  embedding_dims: 64
+  embedding_min_frequency: 1e-3
+  embedding_max_frequency: 80
+
+  # min_signal_rate : 0.02
+  # max_signal_rate : 1.00
+
+# optimization
+train_cfg:
+  ema : 0.999
+  learning_rate : 5e-4
+  weight_decay : 1e-4
+  num_epochs: 2000
+  lr_scheduler:
+    sch_type: "warmup"
+    attr:
+      num_steps: 40_000 #30_000
+
+

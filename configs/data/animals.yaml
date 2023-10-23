@@ -1,13 +1,12 @@
-# _target_: src.pipeline.DataModule
+# _target_: tools.datamodule.pipeline.DataModule
 # _convert_: object
 
 data_name: animal_img
 
 train:
-  _target_: src.pipeline.ImageModule
+  _target_: tools.datamodule.pipeline.ImageModule
 
-  img_enc: ${..img_enc}
-  # run_img_enc_test: true
+  img_enc: null #${..img_enc}
   
   data:
     _target_: torchvision.datasets.ImageFolder
@@ -25,10 +24,10 @@ train:
         - _target_: torchvision.transforms.ToTensor
 
 valid:
-  _target_: src.pipeline.ImageModule
+  _target_: tools.datamodule.pipeline.ImageModule
 
-  img_enc: ${..img_enc}
-  # run_img_enc_test: true
+  img_enc: ${..train.img_enc}
+  swap_image_dim: true
   
   data:
     _target_: torchvision.datasets.ImageFolder
@@ -36,9 +35,6 @@ valid:
     root: /srv/beegfs/scratch/groups/rodem/datasets/afhq_v2/test/
     transform: ${...train.data.transform}
 
-# img_enc:
-#   _target_: src.pipeline.ImageModule
-#   _partial_: True
 img_enc: 
   _target_: torchvision.transforms.Compose
   transforms:

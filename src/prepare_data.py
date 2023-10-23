@@ -68,23 +68,31 @@ def prepare_shapenet(h5_file):
 def matrix_to_point_cloud(sample, idx_numbers, num_per_event_max=None):
     "sample: n_features x pc"
     n_pc, num_per_event = np.unique(idx_numbers, return_counts=True)
+    
+    #
     if num_per_event_max is None:
+        # define the max number of cnts
         num_per_event_max= num_per_event.max()
+    elif num_per_event_max is not None:
+        # use predefined number of conts
+        mask_max_cnts = num_per_event< num_per_event_max
+        mask_sample = np.isin(idx_numbers,  n_pc[mask_max_cnts])
+        sample = sample[np.ravel(mask_sample)]
+        num_per_event = num_per_event[mask_max_cnts]
+        n_pc = n_pc[mask_max_cnts]
     n_events = len(n_pc)
-    # max_cnstits = np.max(max_cnstits)
 
-    # n_events = 10
-    # num_per_event = T.randint(5, 15, (n_events,))
-
-    # num_csts = num_per_event.sum()
-    # x = T.randn(len(sample), 3)
-
+    # create mask tensor
     mask = np.arange(0, num_per_event_max)
     mask = np.expand_dims(mask, 0)
     mask = mask < np.expand_dims(num_per_event,1)
 
+    # create tensor with padded elements
     padded_tens = np.ones((n_events, num_per_event_max, sample.shape[1]))*-1
+
+    # add original sample to padded elements
     padded_tens[mask] = sample
+
     return padded_tens, mask
 
 def fill_data_in_pc(sample, idx_numbers):

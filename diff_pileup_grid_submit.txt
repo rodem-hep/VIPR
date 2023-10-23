@@ -1,0 +1,27 @@
+#!/bin/sh
+#SBATCH --job-name=diff_pileup_grid
+#SBATCH --time=00-12:00:00
+#SBATCH --partition=private-dpnc-gpu,shared-gpu
+#SBATCH --chdir=/home/users/a/algren/work/diffusion/
+#SBATCH --mem=48GB
+#SBATCH --output=logs/slurm-%A-%x_%a.out
+#SBATCH --cpus-per-task=16
+#SBATCH --exclude=gpu044
+#SBATCH --gres=gpu:1,VramPerGpu:20G
+#SBATCH -a 0-4
+
+
+##### Adding options for grid search ######
+datatrainjet_physics_cfgmax_cnstits=(100 200 300 400)
+wandbmode=(online)
+
+##### Job script ######
+export XDG_RUNTIME_DIR=""
+
+
+
+srun apptainer exec --nv -B /home/users/a/algren/scratch:/srv/beegfs/scratch/users/a/algren/,/srv/beegfs/scratch/groups/rodem/ /home/users/a/algren/singularity_images/diffusion_pytorch_2.sif\
+	python3 run/diffusion.py \
+		data.train.jet_physics_cfg.max_cnstits=${datatrainjet_physics_cfgmax_cnstits[`expr ${SLURM_ARRAY_TASK_ID} / 1 % 4`]}\
+		wandb.mode=${wandbmode[`expr ${SLURM_ARRAY_TASK_ID} / 4 % 1`]}\
+		

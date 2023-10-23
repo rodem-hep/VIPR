@@ -21,116 +21,163 @@ from tools import schedulers
 import src.diffusion_schemes as ds
 # from src.models.image_model import UNet # used on hydra
 from src.utils import fig2img
-import src.pipeline as pl
+import tools.datamodule.pipeline as pl
+import src.positional_encoding as pe
+
+# from src.models.modules import IterativeNormLayer
+from tools.modules import IterativeNormLayer
+
+
 
 class DiffusionModel(
-    ds.UniformDiffusion
-    # ds.ElucidatingDiffusion
+    # ds.UniformDiffusion
+    ds.ElucidatingDiffusion
     ):
-    def __init__(self, diffusion_config, network, save_path,
-                 train_loader, test_loader, wandb=None, device="cuda",
-                 **kwargs):
+    def __init__(self, init_noise, embedding_cfg, train_cfg, eval_cfg, 
+                 network, save_path=None, train_loader=None, test_loader=None,
+                 wandb=None, device="cuda", **kwargs):
         super().__init__()
-        self.eval_fw = kwargs.get("eval_fw", "")
-        self.eval_iters = diffusion_config.get("eval_iters", 1)
+        self.init_noise = init_noise
+        self.embedding_cfg=embedding_cfg
+        self.train_cfg=train_cfg
+        self.eval_cfg=eval_cfg
         self.wandb=wandb
         self.train_loader=train_loader
         self.test_loader=test_loader
         self.device=device
-        self.diffusion_config=diffusion_config
-        self.n_diffusion_steps = diffusion_config.n_diffusion_steps
         self.save_path=save_path
+        self.run_eval = self.eval_cfg.eval_iters>0
+        # normalisers
+        self.ctxt_normaliser = None
+        self.ctxt_scalar_normaliser = None
         
+
         # mixed precision
         self.loss_scaler = None
-        # self.loss_scaler = T.cuda.amp.GradScaler()
-
-        # get norms
+        self.loss_scaler = T.cuda.amp.GradScaler()
         self.eval_ctxt =None
-        try:
-            self.cnts_mean = {i: T.tensor(j).float() for i,j in self.train_loader.dataset.mean.items()}
-            self.cnts_std = {i: T.tensor(j).float() for i,j in self.train_loader.dataset.std.items()}
-            if self.test_loader is not None:
-                self.eval_ctxt = self.test_loader.dataset.get_normed_ctxt()
-        except AttributeError:
-            self.cnts_mean = self.train_loader.mean
-            self.cnts_std = self.train_loader.std
-            if self.test_loader is not None:
-                self.eval_ctxt = self.test_loader.get_normed_ctxt()
-        # self.ctxt_mean = T.tensor(self.train_loader.dataset.ctxt_mean, device=self.device)
-        # self.ctxt_std = T.tensor(self.train_loader.dataset.ctxt_std, device=self.device)
+        inpt_shape = kwargs.get("inpt_shape")
+        if inpt_shape is None:
+            inpt_shape = self.train_loader.dataset._shape()
+
+        self.eval_fw = kwargs.get("eval_fw", self.test_loader)
+        self.out_trans = kwargs.get("out_trans", None)
+
+        # init normalization layers
+        self.normaliser = IterativeNormLayer(inpt_shape["images"][-1]).to(self.device)
+        if "ctxt_images" in inpt_shape:
+            self.ctxt_normaliser = IterativeNormLayer(inpt_shape["ctxt_images"][-1]).to(self.device)
+        if "ctxt_scalars" in inpt_shape:
+            self.ctxt_scalar_normaliser = IterativeNormLayer(inpt_shape["ctxt_scalars"][-1]).to(self.device)
         
-        self.network = network.to(device)
+        # push network to device        
+        self.network = network.to(self.device)
+
+        # copy network for ema
         self.ema_network = copy.deepcopy(self.network)
+        self.ema_network.eval()
 
         self.optimizer = T.optim.AdamW(self.network.parameters(),
-                                       lr=diffusion_config.learning_rate)
-        if "lr_scheduler" in diffusion_config:
+                                       lr=train_cfg.learning_rate)
+        if "lr_scheduler" in train_cfg:
             self.lr_scheduler = schedulers.get_scheduler(optimizer=self.optimizer,
-                                                         **diffusion_config.lr_scheduler)
+                                                         **train_cfg.lr_scheduler)
 
 
+        # init log
         self.log_columns=["epoch", "denoise_images", "lr"]
         self.log_columns += [f"{j}_{i}" for i in ["train", "valid"]
-                                for j in ["noise_loss", "image_loss","clip"]] 
+                                for j in ["noise_loss", "image_loss","clip"]]
         self.log={i:[] for i in self.log_columns}
+        self.n_train_size=0
 
+        # init loss function
         self.loss = nn.MSELoss()
 
-
         # eval with same noise
-        n_cnts = self.eval_ctxt.pop("true_n_cnts",self.test_loader.dataset.max_cnstits)
-        self.initial_noise = pl.generate_gaussian_noise(eval_ctxt=self.eval_ctxt,
-                                                        n_constituents=n_cnts,
-                                                        **diffusion_config.init_noise)
+        if (self.test_loader is not None):
+            self.eval_ctxt = self.test_loader.dataset.get_normed_ctxt()
+
+            n_cnts=None
+            if "pc" in self.init_noise.datatype:
+                n_cnts = self.eval_ctxt.pop("true_n_cnts",self.test_loader.dataset.max_cnstits)
+            self.initial_noise = ds.generate_gaussian_noise(eval_ctxt=self.eval_ctxt,
+                                                            n_constituents=n_cnts,
+                                                            **self.init_noise)
+            if (("images" in self.eval_ctxt)
+                & ("image" in self.init_noise.datatype)):
+                #find std and mean of data
+                log = self.eval_fw(self.eval_ctxt["images"][:9], name="context_image")
+                self.log.update(log)
+
+        train_cfg["ctxt_dims"] = self.network.ctxt_dims
+        if "embedding" not in train_cfg:
+            train_cfg["embedding"] = "sinusoidal"
+        
+        # init embedding
+        if "sinusoidal" in train_cfg["embedding"]:
+            self.embedding = pe.Sinusoidal(**self.embedding_cfg)
+        else:
+            self.embedding = pe.FourierFeatures(1, **self.embedding_cfg)
+        
         
         # save best
         self.noise_loss_best=999
-
-        # save configs
-        os.makedirs(save_path, exist_ok=True)
-        for i in ["figures", "states"]:
-            os.makedirs(f"{save_path}/{i}", exist_ok=True)
-
-        misc.save_yaml(diffusion_config, f"{save_path}/diffusion_cfg.yaml")
-        # misc.save_yaml(unet_config, f"{save_path}/unet_cfg.yaml")
         
+        # save configs and make folder
+        if save_path is not None:
+            os.makedirs(save_path, exist_ok=True)
+            for i in ["figures", "states"]:
+                os.makedirs(f"{save_path}/{i}", exist_ok=True)
+                
+            misc.save_yaml(train_cfg, f"{save_path}/diffusion_cfg.yaml")
+        
+
+
     def save(self, path, additional_info={}):
+        # save complet diffusion setup
+        T.save(self.state_dict(), path)
+        
+        # save individual optimizer/network with additional info
         states_to_save = {
             'model': self.ema_network.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             }
         states_to_save.update(additional_info)
-        T.save(states_to_save, path)
+        T.save(states_to_save, path.replace("diffusion_", "model_"))
 
-    def denormalize(self, images, clip_bool:bool=True):
-        # convert the pixel values back to 0-1 range
-        images = self.cnts_mean["images"] + images * self.cnts_std["images"]
-        return T.clip(images, min, max) if clip_bool else images
 
     def generate(self, images,  ctxt=None, mask=None):
         # noise -> images -> denormalized images
         with T.no_grad():
             generated_images = self.reverse_diffusion(images=images, ctxt=ctxt, mask=mask)
 
-        generated_images = self.denormalize(generated_images, clip_bool= mask is None)
+        generated_images = self.normaliser.reverse(generated_images, mask=mask).cpu()
 
-        return {"gen_data": generated_images, "mask": mask, "ctxt": ctxt}
-        # if mask is None:
-        #     return generated_images.permute(0, 2, 3, 1)
-        # else:
-        #     return generated_images, mask
+        # clip between 0 and 1 for images
+        if "image" in self.init_noise.datatype:
+            generated_images = T.clip(generated_images, 0, 1)
+
+        # create output dict
+        gen_data = {"gen_data": generated_images}
+        if ctxt is not None:
+            gen_data["ctxt"] = ctxt
+        if mask is not None:
+            gen_data["mask"] = mask
+
+        return gen_data
+
     
     def wandb_log(self):
         self.wandb.log(self.log)
         self.log={i:[] for i in self.log_columns}
     
-    def generate_samples(self):
+    def generate_samples(self, initial_noise, disable_bar=True):
 
-        generated_data={"gen_data":T.tensor([]), "mask":T.tensor([]), "ctxt":{}}
+        generated_data={}
 
-        for sample in tqdm(self.initial_noise, total=len(self.initial_noise),
-                            disable=True # len(self.initial_noise)==1
+        for sample in tqdm(initial_noise, total=len(initial_noise),
+                            disable=disable_bar # len(self.initial_noise)==1
                             ):
 
             # sample = {i:j.to(self.device) for i,j in sample.items()}
@@ -140,6 +187,8 @@ class DiffusionModel(
             # concat to generated_data
             for i,j in _generated.items():
                 if isinstance(j, dict): # for dict nested ctxt
+                    if i not in generated_data:
+                        generated_data[i]={}
                     for k,l in j.items():
                         if k not in generated_data[i]:
                             generated_data[i][k]=T.tensor([])
@@ -148,28 +197,32 @@ class DiffusionModel(
                 else:
                     if T.isnan(_generated[i]).any():
                         print("why")
+                    if i not in generated_data:
+                        generated_data[i]=T.tensor([])
                     generated_data[i] = T.concat([generated_data[i], _generated[i]],0)
 
         return generated_data
 
-    def run_evaluate(self, test_loader, epoch_nr=0):
+    def run_evaluate(self, test_loader, epoch_nr=0, disable_bar=True):
 
         # plot random generated images for visual evaluation of generation quality
-        if (not epoch_nr%self.eval_iters) & True:
+        if (not epoch_nr%self.eval_cfg.eval_iters):# & (epoch_nr>0):
 
-            generated_data = self.generate_samples()
-            # if isinstance(self.eval_fw, type): # check if eval_fw is class
-            log = self.eval_fw(**generated_data)
-            self.log.update(log)
-            # else:
-            #     generated_data, generated_mask = self.plot_images(test_images=(generated_data,generated_mask),
-            #                                     epoch=epoch_nr, name="denoise_images")
+            # generate sample
+            generated_data = self.generate_samples(self.initial_noise,
+                                                   disable_bar=disable_bar)
 
-        if (test_loader is not None) & True:
+            # evaluate in framework and log
+            if self.eval_fw is not None:
+                log = self.eval_fw(**generated_data, name="generated_images", n_epoch=epoch_nr)
+                self.log.update(log)
+
+        # validate training scores
+        if (test_loader is not None) & (self.wandb is not None):
             noise_loss = {i.replace("_valid", ""):[] for i in self.log.keys()
                           if "valid" in i}
             # run over training samples
-            for sample in tqdm(test_loader):
+            for sample in tqdm(test_loader, disable=True):
 
                 # sample = {i: j.to(self.device) for i,j in sample.items()}
                 with T.no_grad():
@@ -193,11 +246,11 @@ class DiffusionModel(
         if self.loss_scaler is not None:
             self.loss_scaler.scale(log["noise_loss"]).backward()
             # Unscales the gradients of optimizer's assigned params in-place
-            # self.loss_scaler.unscale_(self.optimizer)
+            self.loss_scaler.unscale_(self.optimizer)
 
-            # # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
-            # clip_gradient = T.nn.utils.clip_grad_norm_(self.network.parameters(), 10)
-            # log["clip"] = clip_gradient
+            # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
+            clip_gradient = T.nn.utils.clip_grad_norm_(self.network.parameters(), 10, error_if_nonfinite=False)
+            log["clip"] = clip_gradient
             # optimizer's gradients are already unscaled, so scaler.step does not unscale them,
             # although it still skips optimizer.step() if the gradients contain infs or NaNs.
             self.loss_scaler.step(self.optimizer)
@@ -210,42 +263,42 @@ class DiffusionModel(
 
         # track the exponential moving averages of weights
         with T.no_grad():
-            self.ema_network.ema(self.network.state_dict(),self.diffusion_config.ema)
+            self.ema_network.ema(self.network.state_dict(),self.train_cfg.ema)
 
         return {i:j.cpu().detach().numpy() for i,j in log.items()}
                 
-    def run_training(self, run_eval=True):
+    def run_training(self):
         
         #progress bar for training
-        pbar = tqdm(range(self.diffusion_config.num_epochs))
+        pbar = tqdm(range(self.train_cfg.num_epochs))
 
 
         for ep in pbar:
 
-            if run_eval:
+            if self.run_eval:
                 # run evaluation
                 self.run_evaluate(self.test_loader, ep)
 
             # run over training samples
-            n_train_size=0
             for nr, sample in enumerate(self.train_loader):
 
-                # sample = {i: j.to(self.device) for i,j in sample.items()}
-
                 log_ep = self.train_step(**sample)
-                n_train_size+=len(sample["images"])
+                self.n_train_size+=len(sample["images"])
                 
                 for key, items in log_ep.items():
-                    if np.isnan(items):
-                        raise ValueError("is NaN")
+                    # if np.isnan(items):
+                    #     raise ValueError("is NaN")
                     self.log[key+"_train"].append(items)
+
+            self.log["n_samples"] = self.n_train_size
+            
             # input logging
             for key in log_ep:
                 self.log[key+"_train"] = np.mean(self.log[key+"_train"])
 
             self.log["lr"] = self.optimizer.state_dict()["param_groups"][0]["lr"]
             
-            if run_eval:
+            if self.run_eval & True: # TODO not using the save model yet
                 if self.log["noise_loss_valid"]<self.noise_loss_best:
                     self.save(f"{self.save_path}/states/diffusion_{ep}.pth")
                     self.noise_loss_best = self.log["noise_loss_valid"]
@@ -254,93 +307,26 @@ class DiffusionModel(
 
             if self.wandb is not None:
                 self.wandb_log()
-            
 
-    def plot_images(self, test_images, epoch=None, num_rows=3, num_cols=3, name=""):
 
-        if len(test_images)==2:
-            test_images, mask = test_images
-
-        if len(test_images.shape) == 4:
-            test_images= test_images.permute(0, 2, 3, 1)
-
-        if isinstance(test_images, T.Tensor):
-            mask = mask.cpu().detach().numpy()
-            test_images = test_images.cpu().detach().numpy()
-
-        fig, ax = plt.subplots(num_rows, num_cols, figsize=(8*num_rows, 6*num_cols))
-        for row in range(num_rows):
-            for col in range(num_cols):
-                index = row * num_cols + col
-                    
-                if "pc" in self.diffusion_config.init_noise.datatype:
-                    ax[row, col].scatter(test_images[index, mask[index], 0],
-                                test_images[index, mask[index], 1],
-                                s=test_images[index, mask[index], 2],
-                                marker="o"
-                                )
-                else:
-                    style = {"vmin":0, "vmax":1}
-                    if test_images[index].shape[-1]:
-                        style["cmap"] = "gray"
-                    ax[row, col].imshow(test_images[index], **style)
-                    ax[row, col].axis("off")
-        plt.tight_layout()
-        plt.title(epoch)
-        if "pc" in self.diffusion_config.init_noise.datatype:
-            fig = fig2img(fig)
-            fig = wandb.Image(fig)
-        self.log[name] = fig
-        plt.close()
-        return test_images, mask
-
-def get_standardization(loader, pc:bool=False):
-    "dummy standardization function"
-    data=[]
-    data_ctxt=[]
-    mask_lst = []
-    for nr, i in tqdm(enumerate(loader)):
-        if pc:
-            data.append(i["images"])
-            mask_lst.append(i["mask"])
-            data_ctxt.append(i["images"])
-        else:
-            data.append(i[0] if len(i) else i)
-            if len(i[1].shape)>2:
-                data_ctxt.append(i[1] if len(i) else i)
-            else:
-                data_ctxt.append(None)
-        if nr==10:
-            break
-    data=T.concat(data)
-    if data_ctxt[0] is not None:
-        data_ctxt=T.concat(data_ctxt)
-    if len(mask_lst)>0:
-        mask_lst=T.concat(mask_lst)
-        
-        return (data[:9], mask_lst[:9]), data_ctxt, None,None
-    else:
-        return data, data_ctxt, data.mean(), data.std()
 
 @hydra.main(version_base=None, config_path=str(root / "configs"), config_name="config")
 def main(config):
     #dataloader
-    train_loader = hydra.utils.instantiate(config.data_cfgs.train,
-                                           loader_config=config.data_cfgs.loader_config)
-    test_loader = hydra.utils.instantiate(config.data_cfgs.valid,
-                                          loader_config=config.data_cfgs.loader_config,
-                                          max_cnstits=train_loader.dataset.max_cnstits,
-                                          jet_norms=train_loader.dataset.jet_norms,
-                                          mean=train_loader.dataset.mean,
-                                          std=train_loader.dataset.std,
-                                          )
-
-    #dataloader
-    if "Jet" in test_loader.__str__():
-        eval_fw = test_loader
+    train_loader = hydra.utils.instantiate(config.data.train,
+                                           loader_config=config.data.loader_config)
+    if "jet" in config.data.valid._target_.lower():
+        test_loader = hydra.utils.instantiate(config.data.valid,
+                                            loader_config=config.data.loader_config,
+                                            max_cnstits=train_loader.dataset.max_cnstits,
+                                            datatype=train_loader.dataset.datatype,
+                                            )
     else:
-        eval_fw = hydra.utils.instantiate(config.eval)
-
+        test_loader = hydra.utils.instantiate(config.data.valid,
+                                            loader_config=config.data.loader_config,
+                                            )
+    
+    # init W&B
     wandb.config = omegaconf.OmegaConf.to_container(
         config, resolve=True, throw_on_missing=True
     )
@@ -349,35 +335,23 @@ def main(config):
 
     # init network
     network=hydra.utils.instantiate(config.model,ctxt_dims=train_loader.get_ctxt_shape())
-    diffusion_config = hydra.utils.instantiate(config.diffusion_cfg)
-    diffusion_config.init_noise.shape = list(train_loader._shape())
 
     # init diffusion
-    model = DiffusionModel(diffusion_config=diffusion_config,
-                           network=network,
-                           train_loader=train_loader.train_dataloader(),
-                           test_loader=test_loader.test_dataloader(),
-                           device=config.device,
-                           save_path=config.save_path,
-                           eval_fw=eval_fw,
-                           wandb=wandb, 
-                           )
+    diffusion = hydra.utils.instantiate(
+        config.trainer,
+        network=network,
+        train_loader=train_loader.train_dataloader(),
+        test_loader=test_loader.test_dataloader(),
+        device=config.device,
+        save_path=config.save_path,
+        eval_fw=test_loader,
+        wandb=wandb,
+        )
 
-    print(f"Trainable parameters: {model.network.count_trainable_parameters()}")
-    wandb.config.update({"Model Parameters": model.network.count_trainable_parameters()})
-    
-    if config.diffusion_cfg.super_res & (model.wandb is not None):
-        #find std and mean of data
-        data, data_ctxt, _, _ = get_standardization(train_loader,
-                                                pc = "PointCloud" in train_loader.__str__())
-        model.plot_images(test_images=data_ctxt[:9], name="context_image")
-        model.plot_images(test_images=data[:9], name = "true_image")
-    # else:
-    #     model.plot_images(test_images=data, name="true_image")
-    #     # model.plot_images(name="context_image")
-    #     data_ctxt=[None]
+    print(f"Trainable parameters: {diffusion.network.count_trainable_parameters()}")
+    wandb.config.update({"Model Parameters": diffusion.network.count_trainable_parameters()})
 
-    model.run_training(run_eval=True)
+    diffusion.run_training()
 
         
 if __name__ == "__main__":

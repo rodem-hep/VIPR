@@ -1,4 +1,4 @@
-_target_: src.pipeline.PointCloudModule
+_target_: tools.datamodule.pipeline.PointCloudModule
 _convert_: object
 
 train_path: /home/users/a/algren/scratch/diffusion/shapenet/shapenet.hdf5

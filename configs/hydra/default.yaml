@@ -1,0 +1,8 @@
+# To allow hydra to change the current working directory when running the file
+job:
+  chdir: True
+
+# Interpolated variables output directory, generated dynamically on each run
+run:
+  dir: ${save_path}
+

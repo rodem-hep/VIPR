@@ -1,0 +1,21 @@
+# @package _global_
+glob_path: /home/users/a/algren/scratch/trained_networks/diffusion/
+
+jet_vars: ['eta', 'mass', 'phi', 'pt']
+
+n_post_to_gen: 500
+
+eval:
+  _target_: run.evaluation.EvaluatePhysics
+  # path_to_model: ${glob_path}/jet_322_2023_10_17_10_42_29_701788
+  path_to_model: ${glob_path}/jet_100_2023_10_19_16_48_45_437257
+  size: 10_000
+  device: cuda
+  save_generated: True
+
+  loader_config:
+    batch_size: 512
+    num_workers: 8
+  
+  eval_cfg:
+    n_diffusion_steps: 20

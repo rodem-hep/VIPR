@@ -1,32 +1,11 @@
-_target_: src.models.pc_model.PileUpRemoval
-_convert_: object
-
-device: ${device}
-
-# input dims
-vkq_dims: 3
-ctxt_dims: null
-upscale_dims: 128
-
-# network scaling
-embedding_cfg:
-  embedding_dims: 128
-  embedding_min_frequency: 0
-  embedding_max_frequency: 80
-
-
-dense_cfg:
-  act_str: gelu
-  n_layers: 3
-  norm: layer
-
-trans_cfg:
-  num_layers: 4
+decoder_cfg:
+  _target_: tools.transformers.transformer.Perceiver
+  _partial_: true
   pcivr_cfg:
     latent_dim: 
-      - 128 # n_cons
+      - 16 # n_cons
       - ${....upscale_dims} #features
-    n_processes: 1
+    n_processes: 0
     dense_cfg: ${...dense_cfg}
 
     encode_cfg:
@@ -34,20 +13,21 @@ trans_cfg:
       num_layers: 1
       mha_config: 
         attn_heads: 8
-      init_self_attn: False
-      dense_cfg: ${....dense_cfg}
-      ctxt_dim: 0
+      init_self_attn: True
+      dense_cfg: ${..dense_cfg}
+      ctxt_dim: ${....upscale_dims}
 
-    process_cfg:       
-      model_dim: ${....upscale_dims}
-      num_layers: 1
-      mha_config: 
-        attn_heads: 8
-      dense_cfg: ${....dense_cfg}
-      ctxt_dim: 0
+    # process_cfg:       
+    #   model_dim: ${....upscale_dims}
+    #   num_layers: 1
+    #   mha_config: 
+    #     attn_heads: 8
+    #   dense_cfg: ${....dense_cfg}
+    #   ctxt_dim: ${....upscale_dims}
 
     decode_cfg: ${.encode_cfg}
 
+encoder_cfg: ${.decoder_cfg}
 
   # film_cfg:
   #   ctxt_size: ${...embedding_cfg.embedding_dims}

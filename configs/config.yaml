@@ -1,44 +1,23 @@
 # @package _global_
 
-hydra:
-  run:
-    dir: ${save_path}
-
 defaults:
   - _self_
-  - diffusion_cfg: default.yaml
-  
-  - model: pc_cfg.yaml
-  # - data_cfgs: pc_jet.yaml
-  - data_cfgs: pc_top_jet.yaml
+
+  - trainer: default.yaml
+  - data: default.yaml
+  - model: pc_diffusion.yaml
+  # - model: image_diffusion.yaml
   - eval: jet.yaml
 
-  # - data_cfgs: pc_mnist.yaml
   # - eval: mnist_pc.yaml
-  
-  # - data_cfgs: pc_shapenet.yaml
-  
+
   # - eval: default.yaml
-  # - model: unet_cfg.yaml
-  # - data_cfgs: animals.yaml
+  # # - model: unet_cfg.yaml
+  # - model: u_perceiver_cfg.yaml
+
+  - wandb: default.yaml
+  - hydra: default.yaml
 
 path: /home/users/a/algren/scratch/trained_networks/diffusion/
-save_path: ${path}/${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+save_path: ${path}/${wandb.name}
 device: cuda
-
-wandb:
-  project: pc-${..data_cfgs.data_name}-diffusion
-  entity: malteal
-  mode: online # online offline
-  name: ${..data_cfgs.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
-
-data_cfgs:
-  standardize_bool: False
-  loader_config:
-    pin_memory: true
-    batch_size: 512
-    num_workers: 8
-    shuffle: false
-    prefetch_factor: ${data_cfgs.loader_config.num_workers}
-    # pin_memory_device: ${device}
-    persistent_workers: False

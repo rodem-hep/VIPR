@@ -5,15 +5,16 @@ import torch.nn as nn
 import torchvision as TV
 import numpy as np
 from omegaconf import OmegaConf
+import torchvision
 
 # internal 
 from tools import misc
 from tools.discriminator import DenseNet
+from tools.modules import FiLM, Gate, ResidualBlock
 import src.positional_encoding as pe
 from src.models.image_transformer import (MultiHeadSelfAttention, MultiHeadGateAttention,
                          VisionTransformerLayer)
 
-from src.models.modules import FiLM, Gate, ResidualBlock
 
 class UNet(nn.Module):
     def __init__(self, input_shape, channels, block_depth, min_size,
@@ -47,7 +48,7 @@ class UNet(nn.Module):
         self.to(self.device)
 
     @T.no_grad()
-    def exponential_moving_averages(self, state_dict, ema_ratio):
+    def ema(self, state_dict, ema_ratio):
         ema_state_dict = self.state_dict()
         for (key, weight), (em_key, ema_para) in zip(state_dict.items(),
                                                      ema_state_dict.items()):
@@ -68,6 +69,10 @@ class UNet(nn.Module):
         self.film = nn.ModuleList([]) if self._use_film else None
         self.cross_attention = nn.ModuleList([])
         
+        # permute layer because torch is dumb
+        self.in_permute = torchvision.ops.Permute([0,3,1,2])
+        self.out_permute = torchvision.ops.Permute([0,2,3,1])
+        
         # positional embedding
         # self.embedding = pe.sinusoidal(self.embedding_max_frequency,
         #                                self.embedding_dims,
@@ -83,22 +88,18 @@ class UNet(nn.Module):
         start_channels = self.input_shape[0]*self.img_enc
         if not self._use_film:
             start_channels +=self.embedding_dims
+
         # init conv
-        self.start_conv = nn.Sequential(
-                                        nn.Conv2d(start_channels,
-                                                  self.channels[0],
-                                                  kernel_size=1)
-                                        )
-        self.end_conv = nn.Sequential(
-            nn.Conv2d(self.input_shape[0],self.input_shape[0],kernel_size=1)
-            )
-        self.end_conv[-1].weight.data.fill_(0.00)
-        self.end_conv[-1].bias.data.fill_(0.00)
+        self.start_conv = nn.Conv2d(start_channels,self.channels[0], kernel_size=1)
+        self.end_conv = nn.Conv2d(self.input_shape[0],self.input_shape[0],kernel_size=1)
+        self.end_conv.weight.data.fill_(0.00)
+        self.end_conv.bias.data.fill_(0.00)
         
         ## FiLM context
         if self._use_film:
-            self.film = FiLM(self.embedding_dims+self.ctxt_dims.get("images", 0), self.channels[1:],
-                             dense_config=self.film_config, device=self.device)
+            self.film = FiLM(self.embedding_dims,#+self.ctxt_dims.get("ctxt_images", [0])[-1],
+                             self.channels[1:], dense_config=self.film_config,
+                             device=self.device)
         else: # dummy film
             self.film = iter([None for i in range(1000)])
 
@@ -120,13 +121,14 @@ class UNet(nn.Module):
             ):
             #gated cross attention
             # when img too big, use simple gating
-            if ((self.cross_attention_cfg is not None)&
-                (out_img_dim <= self.cross_attention_cfg["attn_below"])): 
+            if ((self.cross_attention_cfg is not None)):
+                # (out_img_dim <= self.cross_attention_cfg["attn_below"])): 
                 self.cross_attention.append(
                     MultiHeadGateAttention(input_ch, output_ch,
                                             image_shape_vk= [output_ch, out_img_dim, out_img_dim], 
                                             image_shape_q= [output_ch, out_img_dim, out_img_dim],
                                             #[input_ch, in_img_dim, in_img_dim], 
+                                            permute_layers=[self.out_permute, self.in_permute],
                                             **self.cross_attention_cfg))
             else:
                 if self.use_gate:
@@ -147,7 +149,8 @@ class UNet(nn.Module):
             if img_dim <= self.self_attention_cfg["attn_below"]:
                 self.down_self_attention.append(
                     MultiHeadSelfAttention(n_channels,
-                                           image_shape= [n_channels, img_dim, img_dim], 
+                                           image_shape= [img_dim, img_dim, n_channels],
+                                           permute_layers=[self.out_permute, self.in_permute],
                                             **self.self_attention_cfg))
             else:
                 self.down_self_attention.append(None)
@@ -158,12 +161,18 @@ class UNet(nn.Module):
             if img_dim <= self.self_attention_cfg["attn_below"]:
                 self.up_self_attention.append(
                     MultiHeadSelfAttention(n_channels,
-                                           image_shape= [n_channels, img_dim, img_dim], 
-                                            **self.self_attention_cfg))
+                                           image_shape= [img_dim, img_dim, n_channels], 
+                                           permute_layers=[self.out_permute, self.in_permute],
+                                           **self.self_attention_cfg))
             else:
                 self.up_self_attention.append(None)
 
-    def forward(self, noisy_images, noise_variances=None, ctxt=None, mask=None):
+    def forward(self, noisy_images, noise_variances=None, ctxt=None, **kwargs):
+        if ctxt is None:
+            ctxt = {}
+        
+        noisy_images=noisy_images.to(self.device)
+        noise_variances=noise_variances.to(self.device)
 
         # noise positional encoding
         if (noise_variances is not None) and (not self._use_film):
@@ -171,16 +180,15 @@ class UNet(nn.Module):
             e = self.noise_upscale(e)
             x = T.concat([x, e],1)
         elif self._use_film:
-            e = self.embedding(noise_variances)
+            e = self.embedding(noise_variances, len(noisy_images.shape))
             self.film(e[:,0,0,:])
             # self.film(e[:,:,0,0])
         
-        if ctxt is not None:
-            noisy_images = T.concat([noisy_images, ctxt],1)
-            
-            
+        if "images" in ctxt:
+            noisy_images = T.concat([noisy_images, ctxt["images"].to(self.device)],-1)
 
-        x = self.start_conv(noisy_images)
+        # init conv
+        x = self.start_conv(self.in_permute(noisy_images))
 
         # downscale part
         skips = []
@@ -217,7 +225,7 @@ class UNet(nn.Module):
 
         x = self.end_conv(x) # TODO add original input?
 
-        return x
+        return self.out_permute(x)
 
     
 

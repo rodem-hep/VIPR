@@ -1,20 +1,18 @@
-_target_: src.models.image_model.UNet
+_target_: tools.convolutions.conv_nets.UNet
 # _convert_: object
 
 device: ${device}
 
-
 #UNet
-embedding_dims : 32
+embedding_dims : 64
 ctxt_dims: 0
-embedding_max_frequency : 1000.0
-input_shape: [3, 64, 64]
+input_shape: [1, 64, 64]
 channels : [32, 32, 64, 64, 128, 128]
 block_depth : 2
-min_size: 4
+min_size: 2
 dropout: 0.1
 use_gate: true
-img_enc: 2 # super-res = 2 else 1
+img_enc: 1 # super-res = 2 else 1
 
 # sub-modules
 #FiLM
@@ -27,12 +25,11 @@ film_config:
 
 # self attention between images
 self_attention_cfg:
-  attn_below: 8
+  attn_below: 16  
   device: ${device}
   attn_heads: 16
   trainable_pe: true
   pos_encode_kwargs: null
-  #   embedding_max_frequency : ${...embedding_max_frequency}
 
 # cross attention as gates to residual connection
 cross_attention_cfg:
@@ -41,4 +38,3 @@ cross_attention_cfg:
   attn_heads: 16
   trainable_pe: true
   pos_encode_kwargs: null
-    # embedding_max_frequency : ${...embedding_max_frequency}

@@ -1,0 +1,24 @@
+# gridsearch settings
+setting:
+  job-name: diff_pileup_grid
+  chdir: /home/users/a/algren/work/diffusion/
+  mem: 48GB
+  time: "00-12:00:00"
+  gres: gpu:1,VramPerGpu:20G
+  cpus-per-task: 16
+  exclude: gpu044
+
+run_args:
+  singularity_instance: /home/users/a/algren/singularity_images/diffusion_pytorch_2.sif
+
+runfile: run/diffusion.py
+
+# training settings
+# model.num_layers: [4,5,6]
+
+# model.dense_cfg.act_str: [leaky_relu, gelu]
+
+data.train.jet_physics_cfg.max_cnstits: [100, 200, 300, 400]
+
+wandb.mode: [online]
+# wandb.group: [gridsearch]
