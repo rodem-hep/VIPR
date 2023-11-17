@@ -76,6 +76,8 @@ class PCDiffusion(nn.Module):
             
         self.downscale_conv  = DenseNetwork(2*self.upscale_dims,self.vkq_dims,
                                      zeroed=True, **self.dense_cfg)
+        # self.last_mlp  = DenseNetwork(self.vkq_dims,self.vkq_dims,
+        #                              zeroed=True, **self.dense_cfg)
 
     @T.no_grad()
     def ema(self, state_dict, ema_ratio):
@@ -93,6 +95,7 @@ class PCDiffusion(nn.Module):
             
     def forward(self, input_vkq: T.Tensor, mask:T.Tensor=None, ctxt:T.Tensor=None) -> T.Tensor:
         input_vkq= input_vkq.to(self.device)
+        # input_vkq_original= input_vkq.clone()
         
         if mask is not None:
             mask= mask.to(self.device)

@@ -7,11 +7,11 @@ train:
   _convert_: object
   jet_path: /srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/path_lists.yaml
   sub_col: train
-  n_files: null
+  n_files: 1
 
   jet_physics_cfg:
-    max_cnstits: 100
-    max_ctxt_cnstits: 200
+    max_cnstits: 100 #322
+    max_ctxt_cnstits: 200 #422 
     datatype: ${data.datatype}
     # variables used
     target_names: ['eta', 'phi', 'pt']
@@ -29,7 +29,7 @@ valid:
 
   jet_path: ${..train.jet_path}
   sub_col: valid
-  n_files: 5
+  n_files: 1
 
   pileup_path: ${..train.jet_physics_cfg.pileup_path}
 

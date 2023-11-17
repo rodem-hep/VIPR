@@ -1,0 +1,14 @@
+# @package _global_
+
+defaults:
+ - _self_
+ - run_100_cnts.yaml
+#  - run_full_cnts.yaml
+
+wandb:
+  mode: online
+
+trainer:
+  eval_cfg:
+    eval_iters: 5
+

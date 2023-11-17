@@ -26,7 +26,7 @@ import src.positional_encoding as pe
 
 # from src.models.modules import IterativeNormLayer
 from tools.modules import IterativeNormLayer
-
+# jet_2023_11_13_12_14_10_126343
 
 
 class DiffusionModel(
@@ -116,9 +116,9 @@ class DiffusionModel(
         
         # init embedding
         if "sinusoidal" in train_cfg["embedding"]:
-            self.embedding = pe.Sinusoidal(**self.embedding_cfg)
+            self.embedding = pe.Sinusoidal(device=self.device, **self.embedding_cfg)
         else:
-            self.embedding = pe.FourierFeatures(1, **self.embedding_cfg)
+            self.embedding = pe.FourierFeatures(1, device=self.device, **self.embedding_cfg)
         
         
         # save best
@@ -250,7 +250,8 @@ class DiffusionModel(
 
             # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
             clip_gradient = T.nn.utils.clip_grad_norm_(self.network.parameters(), 10, error_if_nonfinite=False)
-            log["clip"] = clip_gradient
+            if not clip_gradient.isnan():
+                log["clip"] = clip_gradient
             # optimizer's gradients are already unscaled, so scaler.step does not unscale them,
             # although it still skips optimizer.step() if the gradients contain infs or NaNs.
             self.loss_scaler.step(self.optimizer)

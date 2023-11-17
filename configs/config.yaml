@@ -17,7 +17,8 @@ defaults:
 
   - wandb: default.yaml
   - hydra: default.yaml
+  - experiment: default.yaml
 
-path: /home/users/a/algren/scratch/trained_networks/diffusion/
+path: /home/users/a/algren/scratch/trained_networks/diffusion/${wandb.mode}/
 save_path: ${path}/${wandb.name}
 device: cuda

@@ -6,6 +6,7 @@ import torch as T
 
 #internal
 from src.utils import fig2img
+import tools.misc as misc
 from tools.visualization import general_plotting as plot
 
 class EvaluateFramework:
@@ -16,12 +17,12 @@ class EvaluateFramework:
             hist_kwargs["normalise"]=len(args)>1
 
         # run wandb if log is present
-        log=kwargs.get("log", False)
+        log=kwargs.get("log", False) # not used any more - it was log transform on variables
 
         # loop over columns
         for nr, name in enumerate(col_name):
             fig, (ax_1, ax_2) = plt.subplots(
-                2, 1, gridspec_kw={"height_ratios": [3, 1]}, figsize=(9, 5), sharex="col"
+                2, 1, gridspec_kw={"height_ratios": [3, 1]}, figsize=(8, 6), sharex="col"
                 )
 
             # unpack data
@@ -42,6 +43,8 @@ class EvaluateFramework:
             if isinstance(log, dict):
                 log[f"{name}_hist"] =  wandb.Image(fig2img(fig))
                 plt.close(fig)
+            if kwargs.get("save_path", None) is not None:
+                misc.save_fig(fig, f"{kwargs['save_path']}{name}.png")
 
         return log
             
@@ -79,6 +82,10 @@ class EvaluateFramework:
                     raise ValueError("Unknown data type")
         plt.tight_layout()
         plt.title(epoch)
+
+        if kwargs.get("save_path", None) is not None:
+            misc.save_fig(fig, f"{kwargs['save_path']}{name}.png")
+
         if kwargs.get("wandb_bool", True):
             log={}
             fig = fig2img(fig)

@@ -16,6 +16,7 @@ from torch.utils.data import Dataset,DataLoader
 
 
 from tools import misc
+import tools.visualization.general_plotting as plot
 from src.utils import undo_log_squash, log_squash
 from src.eval_utils import EvaluateFramework
 from src.prepare_data import fill_data_in_pc, matrix_to_point_cloud
@@ -23,6 +24,43 @@ from tools.datamodule.pipeline import pc_2_image
 from tools.datamodule.datamodule import MultiFileDataset, MultiStreamDataLoader, chunks
 from tools.transformations import log_squash, undo_log_squash
 
+
+def relative_pos(cnts_vars, jet_vars, mask, reverse=False):
+    "Calculate relative position to the jet"
+    cnts_vars_rel = copy.deepcopy(cnts_vars)
+    if reverse:
+        # from relative position to abs position
+        for nr, i in enumerate(['eta', 'phi']):
+            cnts_vars_rel[..., nr] += jet_vars[:, nr][:,None]
+            if i in "phi":
+                cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
+                cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
+
+        cnts_vars_rel[..., nr+1] = np.exp(cnts_vars_rel[..., nr+1])
+        # cnts_vars_rel[..., nr+1] = (np.exp(cnts_vars_rel[..., nr+1])*
+                                        #   jet_vars[:, nr+1][:,None])
+        mask_dR=None
+    else:
+        # from abs position to relative position
+        for nr, i in enumerate(['eta', 'phi']):
+            cnts_vars_rel[..., nr] -= jet_vars[i].values[:,None]
+            if i in "phi":
+                cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
+                cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
+
+        # log squash pT
+        cnts_vars_rel[..., nr+1][mask] = np.clip(cnts_vars_rel[..., nr+1][mask],
+                                                    a_min=1e-8, a_max=None)
+
+        cnts_vars_rel[..., nr+1][mask] = np.log(cnts_vars_rel[..., nr+1][mask])
+        
+        cnts_vars_rel[..., nr+1] = np.nan_to_num(cnts_vars_rel[..., nr+1], -1)
+
+
+    if mask is not None:
+        cnts_vars_rel[~mask]=0
+    
+    return cnts_vars_rel#, mask_dR
 
 JET_COL = ["px","py","pz","eta", "phi", "pt", "mass"]
 
@@ -84,7 +122,7 @@ class JetPhysics(EvaluateFramework, Dataset):
         # Set default values for optional arguments using kwargs.get()
         self.n_files = kwargs.get("n_files")
         self.loader_config = kwargs.get("loader_config", {})
-        self.max_ctxt_cnstits = kwargs.get("max_ctxt_cnstits", None)
+        self.max_ctxt_cnstits = kwargs.get("max_ctxt_cnstits", 400)
         self.max_cnstits = kwargs.get("max_cnstits")
 
         self.noise_to_pileup = kwargs.get("noise_to_pileup", 0.0)
@@ -106,15 +144,15 @@ class JetPhysics(EvaluateFramework, Dataset):
             "percentile_lst": [0, 99.5],
             "style": {"bins": 40, "histtype": "step"},
             "dist_styles": [
-                {"marker": "o", "color": "black", "label": "Truth", "linewidth": 0},
-                {"linestyle": "dotted", "color": "blue", "label": "Generated", "drawstyle": "steps-mid"},
+                {"marker": "o", "color": "black", "label": "Target", "linewidth": 0},
+                {"linestyle": "dotted", "color": "blue", "label": "Diffusion", "drawstyle": "steps-mid"},
             ]
         }
-        # self.hist_kwargs_diff = copy.deepcopy(self.hist_kwargs)
-        # self.hist_kwargs_diff["dist_styles"] =  [
-        #         {"linestyle": "dotted", "color": "blue", "label": "MAE(truth, gen)",
-        #          "drawstyle": "steps-mid"},
-        #     ]
+        self.hist_kwargs_diff = copy.deepcopy(self.hist_kwargs)
+        self.hist_kwargs_diff["dist_styles"] =  [
+                {"linestyle": "dotted", "color": "blue", "label": "Target-Diffusion",
+                 "drawstyle": "steps-mid"}]
+        self.hist_kwargs_diff["percentile_lst"] = [1, 99]
 
         # Load jet path if it's a YAML file
         if ".yaml" in self.jet_path:
@@ -208,41 +246,8 @@ class JetPhysics(EvaluateFramework, Dataset):
     
     @staticmethod
     def relative_pos(cnts_vars, jet_vars, mask, reverse=False):
-        "Calculate relative position to the jet"
-        cnts_vars_rel = copy.deepcopy(cnts_vars)
-        if reverse:
-            # from relative position to abs position
-            for nr, i in enumerate(['eta', 'phi']):
-                cnts_vars_rel[..., nr] += jet_vars[:, nr][:,None]
-                if i in "phi":
-                    cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
-                    cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
-
-            cnts_vars_rel[..., nr+1] = np.exp(cnts_vars_rel[..., nr+1])
-            # cnts_vars_rel[..., nr+1] = (np.exp(cnts_vars_rel[..., nr+1])*
-                                            #   jet_vars[:, nr+1][:,None])
-            mask_dR=None
-        else:
-            # from abs position to relative position
-            for nr, i in enumerate(['eta', 'phi']):
-                cnts_vars_rel[..., nr] -= jet_vars[i].values[:,None]
-                if i in "phi":
-                    cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
-                    cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
-
-            # log squash pT
-            cnts_vars_rel[..., nr+1][mask] = np.clip(cnts_vars_rel[..., nr+1][mask],
-                                                     a_min=1e-8, a_max=None)
-
-            cnts_vars_rel[..., nr+1][mask] = np.log(cnts_vars_rel[..., nr+1][mask])
-            
-            cnts_vars_rel[..., nr+1] = np.nan_to_num(cnts_vars_rel[..., nr+1], -1)
-
-
-        if mask is not None:
-            cnts_vars_rel[~mask]=0
-        
-        return cnts_vars_rel#, mask_dR
+        return relative_pos(cnts_vars=cnts_vars, jet_vars=jet_vars, mask=mask,
+                            reverse=reverse)
 
     def physics_properties(self, sample, mask):
         # calculate eta/phi/pT and jet variables
@@ -447,7 +452,7 @@ class JetPhysics(EvaluateFramework, Dataset):
                 )
 
             # reverse relative
-            gen_cnts_vars = self.relative_pos(gen_data, ctxt_scalars, mask=mask, reverse=True)
+            gen_cnts_vars = self.relative_pos(gen_data, ctxt_scalars, mask=mask==1, reverse=True)
             
             # calculate jet var
             generated_jet_vars = self.physics_properties(gen_cnts_vars, mask==1)
@@ -458,6 +463,13 @@ class JetPhysics(EvaluateFramework, Dataset):
                 generated_jet_vars[scalars_cols].values,
                 col_name=[f"jet_generated_{i}" for i in scalars_cols],
                 hist_kwargs=self.hist_kwargs, log=log)
+
+            # Plot difference between jet var & generated jet var
+            log = self.plot_marginals(
+                (self.jet_vars[scalars_cols].values[:len(generated_jet_vars)]-
+                generated_jet_vars[scalars_cols].values),
+                col_name=[f"jet_generated_diff_{i}" for i in scalars_cols],
+                hist_kwargs=self.hist_kwargs_diff, log=log)
 
         gen_cnts_flatten = gen_cnts_vars[mask==1]
 
@@ -484,7 +496,7 @@ class JetPhysics(EvaluateFramework, Dataset):
         
         # create & upload ctxt & truth
         if kwargs.get("n_epoch", 0)==0:
-            ctxt_cnts = self.relative_pos(ctxt["cnts"], ctxt_scalars, mask=ctxt["mask"],
+            ctxt_cnts = self.relative_pos(ctxt["cnts"], ctxt_scalars, mask=ctxt["mask"]==1,
                                           reverse=True).numpy()
             truth_images = np.clip(np.log(pc_2_image(self.cnts_vars[:100], style)+1), 0,1)
             ctxt_images = np.clip(np.log(pc_2_image(ctxt_cnts[:100], style)+1), 0, 1)
@@ -510,7 +522,8 @@ def load_csv(paths: list, duplicate_number=False, max_cnts:int=None, verbose=Fal
     "Load list of csv paths"
     df=[]
     for i in tqdm(paths, disable=not verbose):
-        _df = pd.read_csv(i, dtype=np.float32, engine="pyarrow")
+        _df = pd.read_csv(i, dtype=np.float32, engine="c")
+        # _df = pd.read_csv(i, dtype=np.float32, engine="pyarrow")
         _df.rename(columns=lambda x: x.strip(), inplace=True)
         if duplicate_number & (len(df)>0):
             _df["jetnumber"] = _df["jetnumber"]+df[-1]["jetnumber"].iloc[-1]+1
@@ -525,9 +538,9 @@ def load_csv(paths: list, duplicate_number=False, max_cnts:int=None, verbose=Fal
     
     #pT cut
     if df["pt"].max()>1000:
-        df = df[df["pt"]>500] # pT in MeV
+        df = df[df["pt"]>1000] # pT in MeV
     else:
-        df = df[df["pt"]>0.5] # pT in GeV
+        df = df[df["pt"]>1] # pT in GeV
     
     # create PC
     cnts_df, mask = matrix_to_point_cloud(df.values, df[event_nr_columns].values, num_per_event_max=max_cnts)
@@ -674,9 +687,11 @@ if __name__ == "__main__":
         paths = misc.load_yaml("/srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/path_lists.yaml")
         
         test_path = ["/srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/topjets_518.csv"]
-        if True: # count total number of cnts
+        test_path = glob("/srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/topjets_*.csv")
+        if False: # count total number of cnts
             test_path = glob("/srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/*.csv")
             max_cns=[]
+            total_cns=[]
             size=0
             nested_lists = [test_path[i:i+10] for i in range(0, len(test_path), 10)]
             for i in tqdm(nested_lists):
@@ -684,6 +699,7 @@ if __name__ == "__main__":
                                     loader_config={"batch_size": 256,"num_workers": 4},
                                     target_names=["eta", "phi", "pt"],
                                     jet_scalars_cols=["eta", "phi", "pt", "mass", "mu"],
+                                    device="cpu",
                                     # pileup_path=PILEUP_PATH,
                                     # datatype="image",
                                     # pileup_dist_args={"mu":15, "std":5}
@@ -691,11 +707,31 @@ if __name__ == "__main__":
                 # data = load_csv(i, len(paths)>1)
                 size+=len(physics)
                 max_cns.append(physics.max_cnstits)
-                break
+                total_cns.append(physics.jet_vars["n_cnts"].values)
+                # break
+            total_cns =np.concatenate(total_cns,0)
             print(max_cns)
             print(np.max(max_cns))
+            fig, ax = plt.subplots(1,1, figsize=(8,6))
+            plot.plot_hist(total_cns, normalise=False, percentile_lst=[0,100],
+                           log_yscale=True,ax=ax, dist_styles=[{"label": "Top-jet"}],
+                           style={"bins": 50})
+            ax.set_ylabel("Entries")
+            ax.set_xlabel("Number of constitutes")
+            misc.save_fig(fig, "/home/users/a/algren/work/diffusion/plots/n_cnts_pr_top.pdf")
             sys.exit()
-        physics.__getitem__(0)
+        else:
+            physics = JetPhysics(test_path[:10],
+                                 max_cnstits=322,
+                                 max_ctxt_cnstits=422,
+                                loader_config={"batch_size": 256,"num_workers": 4},
+                                target_names=["eta", "phi", "pt"],
+                                jet_scalars_cols=["eta", "phi", "pt", "mass", "mu", "n_cnts"],
+                                pileup_path=PILEUP_PATH,
+                                # datatype="image",
+                                pileup_dist_args={"mu":50, "std":10}
+                                )
+        # physics.__getitem__(0)
         # sys.exit()
         dataloader  = physics.train_dataloader()
         # data =[]
@@ -712,19 +748,58 @@ if __name__ == "__main__":
         # loader = MultiStreamDataLoader(datasets, data_kw={"batch_size":1024})
         for ep in range(1):
             multi_data = {"images":[], "scalars":[], "images_ctxt":[],
-                        #   "mask": [],
-                        #   "mask_ctxt": []
+                          "mask": [],
+                          "mask_ctxt": []
                           }
             for i in tqdm(dataloader):
                 multi_data["images"].append(i["images"])
-                # multi_data["mask"].append(i["mask"])
+                multi_data["mask"].append(i["mask"])
                 
                 multi_data["images_ctxt"].append(i["ctxt"]["cnts"])
-                # multi_data["mask_ctxt"].append(i["ctxt"]["mask"])
+                multi_data["mask_ctxt"].append(i["ctxt"]["mask"])
                 
                 multi_data["scalars"].append(i["ctxt"]["scalars"])
         for i in multi_data:
             multi_data[i] = T.concat(multi_data[i], 0).numpy()
+
+        for i,name in zip(range(multi_data["scalars"].shape[1]), physics.jet_scalars_cols):
+            plt.figure()
+            plt.hist(multi_data["scalars"][:,i], bins=100)
+            plt.title(name)
+        
+        # plot jets
+        for i,name, xlabel in zip(range(multi_data["scalars"].shape[1]),
+                          physics.jet_scalars_cols,
+                          [r"$\Delta \eta$", r"$\Delta \phi$",
+                           r"$\log{p_{\mathrm{T}}[\mathrm{GeV}]}$", "Mass [GeV]",
+                           r"$\mu$", "Number of truth cnts."]):
+            args = [multi_data["scalars"][:,i]]
+            if name in physics.jet_vars:
+                args.append(physics.jet_vars[name])
+            fig, ax = plt.subplots(1,1, figsize=(8,6))
+            plot.plot_hist(*args,
+                           style={"bins":50},
+                           dist_styles=[{"label":"Observed jet"},
+                                        {"label":"Truth jet"}],
+                           legend_kwargs={"title": r"Pileup dist.: $\mathcal{N}(50, 10)$"},
+                           ax=ax, log_yscale="GeV" in xlabel, percentile_lst=[0,100])
+            ax.set_xlabel(xlabel)
+            misc.save_fig(fig, f"/home/users/a/algren/work/diffusion/plots/jet_var_{name}.pdf")
+
+        # plot cnts
+        for i,name, xlabel in zip(range(multi_data["images_ctxt"][multi_data["mask_ctxt"]].shape[1]),
+                          physics.jet_scalars_cols, [r"$\Delta \eta$", r"$\Delta \phi$",
+                                                     r"$\log{p_{\mathrm{T}}[\mathrm{GeV}]}$"]):
+            fig, ax = plt.subplots(1,1, figsize=(8,6))
+            plot.plot_hist(multi_data["images_ctxt"][multi_data["mask_ctxt"]][:,i], 
+                           multi_data["images"][multi_data["mask"]][:,i], style={"bins":100},
+                           dist_styles=[{"label":"Observed cnts."},
+                                        {"label":"Truth cnts."}],
+                           legend_kwargs={"title": r"Pileup dist.: $\mathcal{N}(50, 10)$"},
+                           ax=ax)
+            ax.set_xlabel(xlabel)
+            misc.save_fig(fig, f"/home/users/a/algren/work/diffusion/plots/cnts_var_{name}.pdf")
+        
         # if "mask" in multi_data:
         #     added_cnts = multi_data["mask_ctxt"].sum(1)-multi_data["mask"].sum(1)
         #     plt.hist(added_cnts, bins=40)

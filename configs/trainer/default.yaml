@@ -3,7 +3,7 @@ _target_: run.diffusion.DiffusionModel
 
 # evaluate
 eval_cfg:
-  eval_iters: 1 # -1 is off
+  eval_iters: -1 # -1 is off
   n_diffusion_steps: 20
 
 init_noise:

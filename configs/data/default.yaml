@@ -9,5 +9,5 @@ defaults:
 
 loader_config:
   batch_size: 128
-  num_workers: 8
+  num_workers: 12
   shuffle: False
