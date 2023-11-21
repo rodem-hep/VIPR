@@ -301,7 +301,7 @@ if __name__ == "__main__":
             # hist_kwargs["dist_styles"] = [{"label": r"cnts$_{truth}$"},
             #                               {"label": r"cnts$_{diffusion}$"
             #                             }]
-            for i in range(25):
+            for i in range(100):
                 first_truth_cnts = eval_fw.data.cnts_vars[np.arange(0, len(truth_index_sort),1),
                                                         truth_index_sort[:, i], :]
                 first_gen_cnts = gen_cnts[np.arange(0, len(gen_index_sort),1), gen_index_sort[:, i], :]
