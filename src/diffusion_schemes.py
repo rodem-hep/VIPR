@@ -2,6 +2,7 @@
 import torch as T
 import torch.nn as nn
 import numpy as np
+from tqdm import tqdm 
 # internal
 import src.utils as utils
 from typing import Union
@@ -59,13 +60,14 @@ def generate_gaussian_noise(shape:dict, datatype:str,
 
     
 class Solvers(nn.Module):
-    def __init__(self, solver_name):
+    def __init__(self, solver_name, verbose=True):
         super().__init__()
         if "heun2d" in solver_name:
             self.do_heun_step=True
         else:
             self.do_heun_step=False
         self.solver = self.heun2d
+        self.verbose=verbose
 
     @T.no_grad()
     def heun2d(self, initial_noise:Union[T.Tensor, tuple], diffusion_steps:np.ndarray,
@@ -76,7 +78,8 @@ class Solvers(nn.Module):
         #heuns 2nd solver
         # scale to correct std
         x = initial_noise*diffusion_steps[0]
-        for i in range(len(diffusion_steps)-1):
+        for i in tqdm(range(len(diffusion_steps)-1),
+                      disable=not self.verbose):
 
             # left tangent
             dx = 1/diffusion_steps[i] * (x-self.denoise(x, diffusion_steps[i],

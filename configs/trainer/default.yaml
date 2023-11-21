@@ -33,6 +33,6 @@ train_cfg:
   lr_scheduler:
     sch_type: "warmup"
     attr:
-      num_steps: 40_000 #30_000
+      num_steps: 75_000 #30_000
 
 

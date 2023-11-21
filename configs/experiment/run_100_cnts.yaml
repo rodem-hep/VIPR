@@ -7,6 +7,6 @@ data:
       max_cnstits: 100
       max_ctxt_cnstits: 200
   loader_config:
-    batch_size: 128
+    batch_size: 1024
     num_workers: 8
 

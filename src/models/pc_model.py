@@ -17,7 +17,7 @@ import src.positional_encoding as pe
 class PCDiffusion(nn.Module):
     def __init__(self, vkq_dims, ctxt_dims:Union[int, dict]=None, num_layers:int =1,
                  decoder_cfg:dict=None, encoder_cfg:dict=None, dense_cfg:dict=None,
-                 upscale_dims:int=64, embedding_cfg=None,
+                 upscale_dims:int=64, embedding_cfg=None, skip_cnt:bool =False,
                  device:str="cuda"):
         super().__init__()
         self.vkq_dims = vkq_dims
@@ -26,6 +26,7 @@ class PCDiffusion(nn.Module):
         self.decoder_cfg=decoder_cfg
         self.encoder_cfg=encoder_cfg
         self.device = device
+        self.skip_cnt=skip_cnt
         self.dense_cfg=dense_cfg if dense_cfg!=None else {}
         self.embedding_cfg = embedding_cfg
         self.embedding_dims = embedding_cfg.embedding_dims
@@ -75,9 +76,11 @@ class PCDiffusion(nn.Module):
         self.last_encoder = self.encoder_cfg()
             
         self.downscale_conv  = DenseNetwork(2*self.upscale_dims,self.vkq_dims,
-                                     zeroed=True, **self.dense_cfg)
-        # self.last_mlp  = DenseNetwork(self.vkq_dims,self.vkq_dims,
-        #                              zeroed=True, **self.dense_cfg)
+                                     zeroed=not self.skip_cnt, **self.dense_cfg)
+
+        if self.skip_cnt:
+            self.last_mlp  = DenseNetwork(self.vkq_dims+self.upscale_dims, self.vkq_dims,
+                                        zeroed=self.skip_cnt, **self.dense_cfg)
 
     @T.no_grad()
     def ema(self, state_dict, ema_ratio):
@@ -95,7 +98,7 @@ class PCDiffusion(nn.Module):
             
     def forward(self, input_vkq: T.Tensor, mask:T.Tensor=None, ctxt:T.Tensor=None) -> T.Tensor:
         input_vkq= input_vkq.to(self.device)
-        # input_vkq_original= input_vkq.clone()
+        input_vkq_original= input_vkq.clone()
         
         if mask is not None:
             mask= mask.to(self.device)
@@ -123,22 +126,30 @@ class PCDiffusion(nn.Module):
         # transformers
         for i in range(self.num_layers):
 
+            # encodering input/ctxt
             if self.encoder_cfg is not None:
-                # self attention
+
+                # self attention for input
                 input_vkq = self.inpt_encoder_layers[i](input_vkq, mask_vk=mask,
                                                          ctxt=ctxt_scalars)
+
+                # self attention for ctxt
                 input_ctxt = self.ctxt_encoder_layers[i](input_ctxt,
                                                          mask_vk=ctxt_mask,
                                                          ctxt=ctxt_scalars)
 
             # Decode attention
             input_vkq = self.decoder_layers[i](input_vkq, input_ctxt,
-                                                    mask_vk=ctxt_mask,
-                                                    ctxt=ctxt_scalars)
+                                                mask_vk=ctxt_mask,
+                                                ctxt=ctxt_scalars)
 
         # last SA
         input_vkq = self.last_encoder(input_vkq, mask_vk=mask,ctxt=ctxt_scalars)
 
         # downscale output to same output features
-        return self.downscale_conv(input_vkq, ctxt_scalars)
+        output = self.downscale_conv(input_vkq, ctxt_scalars)
 
+        if self.skip_cnt:
+            return self.last_mlp(input_vkq_original+output, ctxt_scalars)
+        else:
+            return output

@@ -250,7 +250,7 @@ class DiffusionModel(
 
             # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
             clip_gradient = T.nn.utils.clip_grad_norm_(self.network.parameters(), 10, error_if_nonfinite=False)
-            if not clip_gradient.isnan():
+            if (not clip_gradient.isnan()) & (not clip_gradient.abs().isinf()):
                 log["clip"] = clip_gradient
             # optimizer's gradients are already unscaled, so scaler.step does not unscale them,
             # although it still skips optimizer.step() if the gradients contain infs or NaNs.

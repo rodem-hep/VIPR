@@ -1,10 +1,11 @@
 # @package _global_
 glob_path: /home/users/a/algren/scratch/trained_networks/diffusion/
 
-jet_vars: ['eta', 'mass', 'phi', 'pt']
+jet_vars: ['eta', 'mass', 'phi', 'pt', "px", "py", "pz"]
 
 n_post_to_gen: 1
-generate_sample: True
+combine_ctxt_size: 4
+generate_sample: False
 csv_sample_to_load: single #posterior_${eval.size}
 plot_images: False
 save_figures: False
@@ -17,12 +18,12 @@ eval:
   # path_to_model: ${glob_path}/jet_100_2023_10_27_09_40_13_128626
   # path_to_model: ${glob_path}/jet_100_2023_10_30_14_49_13_481145
   path_to_model: ${glob_path}/online/jet_2023_11_13_12_14_10_126343
-  size: 15_000 # 1500
+  size: 512 # 1500
   device: cuda
   save_generated: True
 
   loader_config:
-    batch_size: 1024
+    batch_size: 512
     num_workers: 8
   
   eval_cfg:

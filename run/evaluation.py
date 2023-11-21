@@ -118,17 +118,22 @@ class EvaluatePhysics(EvaluateFramework):
     
     def generate_post(self, ctxt:dict, repeats:int=10):
         
-        for k in range(len(ctxt["cnts"])):
-            eval_ctxt = {}
-            for i,j in ctxt.items():
-                eval_ctxt[i] = np.repeat(j[k:k+1], repeats=repeats,
-                                         axis=0)
-            n_cnts = eval_ctxt.pop("true_n_cnts")
-            initial_noise = ds.generate_gaussian_noise(eval_ctxt=eval_ctxt,
-                                                    n_constituents=n_cnts,
-                                                    loader_kwargs=self.loader_config,
-                                                    **self.diffusion.init_noise)
-            yield self.generate_sample(initial_noise, disable_bar=True)
+        # for k in range(len(ctxt["cnts"])):
+        eval_ctxt = {}
+        for i,j in ctxt.items():
+            eval_ctxt[i] = np.repeat(j, repeats=repeats, axis=0)
+
+        n_cnts = eval_ctxt.pop("true_n_cnts")
+
+        self.diffusion.init_noise["size"]=len(n_cnts)
+        loader_config = self.loader_config.copy()
+        loader_config.update({"batch_size": len(n_cnts)})
+                             
+        initial_noise = ds.generate_gaussian_noise(eval_ctxt=eval_ctxt,
+                                                n_constituents=n_cnts,
+                                                loader_kwargs=loader_config,
+                                                **self.diffusion.init_noise)
+        return self.generate_sample(initial_noise, disable_bar=True)
         
     def plot_posterier(self, truth, posterier, columns, **kwargs):
         for i in columns:
@@ -139,7 +144,8 @@ class EvaluatePhysics(EvaluateFramework):
             ax.axvline(truth[i], label="Truth", color="black")
             ax.set_xlabel(i)
             
-    def generate_and_save_post(self, eval_ctxt, n_post_to_gen, saving_name=""):
+    def generate_and_save_post(self, eval_ctxt, n_post_to_gen, saving_name="",
+                               combine_ctxt_size=1):
         if n_post_to_gen>len(eval_ctxt["scalars"]):
             raise ValueError("n_post_to_gen too large")
         
@@ -154,24 +160,26 @@ class EvaluatePhysics(EvaluateFramework):
             saving_name = f"posterior_{self.size}"
             jet_size= self.size
             self.data.jet_vars.iloc[:jet_size].to_csv(f"{self.eval_folder}/truth_jets_{saving_name}.csv")
-            for nr in tqdm(range(self.size)):
+            steps=np.arange(self.size+combine_ctxt_size, step=combine_ctxt_size)
+            for nr, (lower, high) in tqdm(enumerate(zip(steps[:-1], steps[1:])),
+                                          total=len(steps)):
                 # get ctxt
-                ctxt = {i:j[nr:nr+1] for i,j in eval_ctxt.items()}
+                ctxt = {i:j[lower:high] for i,j in eval_ctxt.items()}
                 # ctxt["cnts"] = np.expand_dims(ctxt["cnts"][ctxt["mask"]],0)
                 
                 # generate sample
-                posterior  = self.generate_post(ctxt, n_post_to_gen)
-                gen_jet_vars, _, gen_cnts, gen_cnts_mask = next(posterior)
+                gen_jet_vars, _, gen_cnts, gen_cnts_mask  = self.generate_post(ctxt, n_post_to_gen)
                 
                 # correct index per event
-                new_index = nr*n_post_to_gen
+                new_index = (high-lower)*n_post_to_gen*nr
                 index = gen_cnts_mask*np.arange(len(gen_cnts_mask))[:, None]+new_index
-                gen_jet_vars["eventNumber"] = nr
+                all_gen_cnts.append(np.c_[gen_cnts[gen_cnts_mask].numpy(),
+                                        index[gen_cnts_mask]])
+
+                gen_jet_vars["eventNumber"] = np.ravel(np.arange(lower, high)[:,None]*np.ones((1,n_post_to_gen)))
                 gen_jet_vars.index = gen_jet_vars.index+new_index
 
                 # log the values%
-                all_gen_cnts.append(np.c_[gen_cnts[gen_cnts_mask].numpy(),
-                                        index[gen_cnts_mask]])
                 
                 all_gen_jets.append(gen_jet_vars)
 
@@ -208,7 +216,7 @@ class EvaluatePhysics(EvaluateFramework):
                 mask_evt = gen_jet_vars["eventNumber"]==i
                 percentile_dict[key].append(
                     stats.percentileofscore(gen_jet_vars[key][mask_evt],
-                                            truth_jet_vars[key].iloc[i])
+                                            truth_jet_vars[key].iloc[int(i)])
                     )
         return percentile_dict
 
@@ -223,7 +231,8 @@ if __name__ == "__main__":
     if config.generate_sample:
         gen_cnts, gen_cnts = eval_fw.generate_and_save_post(eval_ctxt,
                                                             # config.jet_vars,
-                                                            config.n_post_to_gen)
+                                                            config.n_post_to_gen,
+                                                            combine_ctxt_size=config.combine_ctxt_size)
         sys.exit()
     elif eval_fw.eval_files_available: # load save generated data
         gen_data = eval_fw.get_eval_files()
@@ -274,8 +283,11 @@ if __name__ == "__main__":
         # plot 1d marginals of cnts
         mask_truth = truth_cnts[:,-1]< 1000000
         mask_gen = gen_cnts[mask][:,-1]< 1000000
-        hist_kwargs["dist_styles"] = [{"label": r"(cnts$_{truth}$-cnts$_{diffusion}$)/cnts$_{truth}$"}]
-        eval_fw.plot_marginals((truth_cnts[mask_truth]-gen_cnts[mask][mask_gen])/truth_cnts[mask_truth],
+        hist_kwargs["dist_styles"] = [{"label": r"(cnts$_{truth}$-cnts$_{diffusion}$)/cnts$_{truth}$"
+                                       }]
+        abs_error_jet = (truth_cnts[mask_truth]-gen_cnts[mask][mask_gen])
+        abs_error_jet[:, 1] = phy.rescale_phi(abs_error_jet[:, 1])
+        eval_fw.plot_marginals(abs_error_jet/truth_cnts[mask_truth],
                                 col_name=["eta", "phi", "pt"],
                                 hist_kwargs=hist_kwargs,
                                 save_path=f"{save_path}/diff_cnts_" if save_figs else None)
@@ -284,14 +296,18 @@ if __name__ == "__main__":
         truth_index_sort = np.argsort(eval_fw.data.cnts_vars[...,-1],-1)[...,::-1]
         # truth_cnts_sorted = eval_fw.data.cnts_vars[np.argsort(eval_fw.data.cnts_vars[...,-1],-1)]
         gen_index_sort = np.argsort(gen_cnts[...,-1],-1)[...,::-1]
-        if False: # # leading cnts
-            for i in range(10):
+        if True: # # leading cnts
+
+            # hist_kwargs["dist_styles"] = [{"label": r"cnts$_{truth}$"},
+            #                               {"label": r"cnts$_{diffusion}$"
+            #                             }]
+            for i in range(25):
                 first_truth_cnts = eval_fw.data.cnts_vars[np.arange(0, len(truth_index_sort),1),
                                                         truth_index_sort[:, i], :]
                 first_gen_cnts = gen_cnts[np.arange(0, len(gen_index_sort),1), gen_index_sort[:, i], :]
                 hist_kwargs["legend_kwargs"]={"title": f"{i+1} leading cnts"}
-                hist_kwargs["percentile_lst"] = [0,99]
-                eval_fw.plot_marginals(first_truth_cnts[:len(first_gen_cnts),-1:]-first_gen_cnts[:,-1:],
+                hist_kwargs["percentile_lst"] = [1,99]
+                eval_fw.plot_marginals((first_truth_cnts[:len(first_gen_cnts),-1:]-first_gen_cnts[:,-1:])/first_truth_cnts[:len(first_gen_cnts),-1:],
                                         col_name=["pt"],
                                         # col_name=["eta", "phi", "pt"],
                                         hist_kwargs=hist_kwargs,
@@ -301,9 +317,10 @@ if __name__ == "__main__":
         percentile_dict = eval_fw.get_percentile(gen_jets, truth_jets,
                                                     columns=config.jet_vars)
             
-        fig, ax = plt.subplots(1,4, figsize=(4*8,6))
+        fig, ax = plt.subplots(1,len(config.jet_vars),
+                               figsize=(len(config.jet_vars)*8,6))
         for nr, i in enumerate(percentile_dict.keys()):
-            ax[nr].hist(percentile_dict[i], range=[0,100], bins=20,
+            ax[nr].hist(percentile_dict[i], range=[0,100], bins=30,
                      label="Posterior")
             ax[nr].set_xlabel(i)
         plt.legend()
@@ -311,7 +328,7 @@ if __name__ == "__main__":
         # plot posteriors
         for i in range(3):
             mask_evt = gen_jets["eventNumber"]==i
-            for col in ["mass", "pt"]:
+            for col in ["eta", "phi"]:#["mass", "pt"]:
                 fig, ax = plt.subplots(1,2, figsize=(1.5*8,6))
                 ax[0].hist(gen_jets[mask_evt][col], bins=30)
                 ax[0].axvline(truth_jets[col].iloc[i], color="black", ls="dashed")

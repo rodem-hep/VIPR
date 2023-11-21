@@ -7,7 +7,7 @@ train:
   _convert_: object
   jet_path: /srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/path_lists.yaml
   sub_col: train
-  n_files: 1
+  n_files: 8
 
   jet_physics_cfg:
     max_cnstits: 100 #322

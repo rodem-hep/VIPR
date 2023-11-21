@@ -6,5 +6,5 @@ num_layers: 1
 mha_config: 
   attn_heads: 8
 ctxt_dim: ${..upscale_dims} 
-init_self_attn: False
+init_self_attn: True
 out_norm: False

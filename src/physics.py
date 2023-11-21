@@ -24,7 +24,12 @@ from tools.datamodule.pipeline import pc_2_image
 from tools.datamodule.datamodule import MultiFileDataset, MultiStreamDataLoader, chunks
 from tools.transformations import log_squash, undo_log_squash
 
-
+def rescale_phi(phi):
+    phi[phi >= np.pi] -= 2*np.pi
+    phi[phi < -np.pi] += 2*np.pi
+    return phi
+    
+    
 def relative_pos(cnts_vars, jet_vars, mask, reverse=False):
     "Calculate relative position to the jet"
     cnts_vars_rel = copy.deepcopy(cnts_vars)
@@ -33,8 +38,7 @@ def relative_pos(cnts_vars, jet_vars, mask, reverse=False):
         for nr, i in enumerate(['eta', 'phi']):
             cnts_vars_rel[..., nr] += jet_vars[:, nr][:,None]
             if i in "phi":
-                cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
-                cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
+                cnts_vars_rel[..., nr] = rescale_phi(cnts_vars_rel[..., nr])
 
         cnts_vars_rel[..., nr+1] = np.exp(cnts_vars_rel[..., nr+1])
         # cnts_vars_rel[..., nr+1] = (np.exp(cnts_vars_rel[..., nr+1])*
@@ -45,8 +49,7 @@ def relative_pos(cnts_vars, jet_vars, mask, reverse=False):
         for nr, i in enumerate(['eta', 'phi']):
             cnts_vars_rel[..., nr] -= jet_vars[i].values[:,None]
             if i in "phi":
-                cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] >= np.pi] -= 2*np.pi
-                cnts_vars_rel[..., nr][cnts_vars_rel[..., nr] < -np.pi] += 2*np.pi
+                cnts_vars_rel[..., nr] = rescale_phi(cnts_vars_rel[..., nr])
 
         # log squash pT
         cnts_vars_rel[..., nr+1][mask] = np.clip(cnts_vars_rel[..., nr+1][mask],

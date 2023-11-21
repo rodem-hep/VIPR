@@ -8,6 +8,6 @@ defaults:
   # - animals.yaml
 
 loader_config:
-  batch_size: 128
+  batch_size: 1024
   num_workers: 12
   shuffle: False

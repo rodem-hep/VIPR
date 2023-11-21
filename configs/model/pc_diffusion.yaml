@@ -6,8 +6,9 @@ device: ${device}
 vkq_dims: 3
 embedding_cfg: ${trainer.embedding_cfg}
 # ctxt_dims: null
-upscale_dims: 256
-num_layers: 14
+upscale_dims: 64
+num_layers: 6
+skip_cnt: True
 
 dense_cfg:
   act_str: gelu
