@@ -20,4 +20,4 @@ defaults:
   # - architectures@encoder_cfg: perceiver_cfg.yaml
   # - architectures@decoder_cfg: perceiver_cfg.yaml
   - architectures@encoder_cfg: trans_encoder.yaml
-  - architectures@decoder_cfg: trans_decoder.yaml
+  # - architectures@decoder_cfg: trans_decoder.yaml

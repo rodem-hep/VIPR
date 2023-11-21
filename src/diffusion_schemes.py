@@ -35,7 +35,7 @@ def generate_gaussian_noise(shape:dict, datatype:str,
         # calculate the n constituents
         if isinstance(n_constituents, tuple):
             n_constituents = np.random.randint(*n_constituents, size)
-        elif isinstance(n_constituents, int):
+        elif isinstance(n_constituents, (int, np.int64)):
             n_constituents = np.random.randint(1, n_constituents, size=size)
         
         if size>len(n_constituents):

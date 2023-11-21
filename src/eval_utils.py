@@ -10,6 +10,10 @@ import tools.misc as misc
 from tools.visualization import general_plotting as plot
 
 class EvaluateFramework:
+    # def __init__()
+    
+    def __call__(*args, **kwargs):
+        print(args)
 
     def plot_marginals(self, *args, col_name, hist_kwargs={}, ratio_kwargs={}, **kwargs):
 

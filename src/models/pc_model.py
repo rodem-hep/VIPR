@@ -29,7 +29,7 @@ class PCDiffusion(nn.Module):
         self.skip_cnt=skip_cnt
         self.dense_cfg=dense_cfg if dense_cfg!=None else {}
         self.embedding_cfg = embedding_cfg
-        self.embedding_dims = embedding_cfg.embedding_dims
+        self.embedding_dims = embedding_cfg.embedding_dims if self.embedding_cfg is not None else 0
         self.num_layers = num_layers
 
         self.ctxt_encoder_layers = nn.ModuleList([])
@@ -53,10 +53,10 @@ class PCDiffusion(nn.Module):
                 self.upscale_dims,**self.dense_cfg)
         
         # ctxt scalar
-        if "scalars" in self.ctxt_dims:
-            self.init_scalars_ctxt = DenseNetwork(
-                self.ctxt_dims["scalars"]+self.embedding_dims,
-                self.upscale_dims,**self.dense_cfg)
+        if ("scalars" in self.ctxt_dims) or (self.embedding_dims>0):
+            self.full_ctxt_dims = self.ctxt_dims.get("scalars", 0)+self.embedding_dims
+            self.init_scalars_ctxt = DenseNetwork(self.full_ctxt_dims,
+                                                  self.upscale_dims,**self.dense_cfg)
 
         if self.decoder_cfg is not None:
             if isinstance(self.ctxt_dims, int):
@@ -66,10 +66,17 @@ class PCDiffusion(nn.Module):
                 self.decoder_cfg["film_cfg"]["ctxt_size"]+=self.ctxt_dims.get("scalars", 0)
         
         if self.encoder_cfg is not None:
+
             for _ in range(self.num_layers):
-                self.decoder_layers.append(self.decoder_cfg())
+
+                if self.decoder_cfg is not None:
+                    self.decoder_layers.append(self.decoder_cfg())
+
+                if ("cnts" in self.ctxt_dims):
+                    self.ctxt_encoder_layers.append(self.encoder_cfg())
+
                 self.inpt_encoder_layers.append(self.encoder_cfg())
-                self.ctxt_encoder_layers.append(self.encoder_cfg())
+                
         else:
             self.decoder_layers.append(self.decoder_cfg())
             
@@ -134,14 +141,16 @@ class PCDiffusion(nn.Module):
                                                          ctxt=ctxt_scalars)
 
                 # self attention for ctxt
-                input_ctxt = self.ctxt_encoder_layers[i](input_ctxt,
-                                                         mask_vk=ctxt_mask,
-                                                         ctxt=ctxt_scalars)
+                if len(self.ctxt_encoder_layers)>0:
+                    input_ctxt = self.ctxt_encoder_layers[i](input_ctxt,
+                                                            mask_vk=ctxt_mask,
+                                                            ctxt=ctxt_scalars)
 
             # Decode attention
-            input_vkq = self.decoder_layers[i](input_vkq, input_ctxt,
-                                                mask_vk=ctxt_mask,
-                                                ctxt=ctxt_scalars)
+            if len(self.decoder_layers)>0:
+                input_vkq = self.decoder_layers[i](input_vkq, input_ctxt,
+                                                    mask_vk=ctxt_mask,
+                                                    ctxt=ctxt_scalars)
 
         # last SA
         input_vkq = self.last_encoder(input_vkq, mask_vk=mask,ctxt=ctxt_scalars)

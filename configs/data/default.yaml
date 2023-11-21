@@ -1,8 +1,8 @@
 defaults:
   - _self_
   # - pc_jet.yaml
-  - top_jet.yaml
-  # - pc_mnist.yaml
+  # - top_jet.yaml
+  - pc_mnist.yaml
 
   # - pc_shapenet.yaml
   # - animals.yaml

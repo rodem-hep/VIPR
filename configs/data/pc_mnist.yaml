@@ -1,9 +1,15 @@
-_target_: tools.datamodule.pipeline.PointCloudModule
-_convert_: object
+train:
+  _target_: tools.datamodule.pipeline.PointCloudModule
+  _convert_: object
 
-train_path: [/home/users/a/algren/scratch/diffusion/mnist/train.csv,
-            /home/users/a/algren/scratch/diffusion/mnist/test.csv
-            ]
-test_path: [/home/users/a/algren/scratch/diffusion/mnist/test.csv]
+  paths: [/home/users/a/algren/scratch/diffusion/mnist/train.csv,
+              /home/users/a/algren/scratch/diffusion/mnist/test.csv
+              ]
+
+valid:
+  _target_: tools.datamodule.pipeline.PointCloudModule
+  _convert_: object
+  paths: [/home/users/a/algren/scratch/diffusion/mnist/test.csv]
 
 data_name: mnist
+datatype: pc

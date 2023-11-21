@@ -2,13 +2,14 @@
 
 defaults:
  - _self_
- - run_100_cnts.yaml
+#  - run_100_cnts.yaml
 #  - run_full_cnts.yaml
+ - run_mnist.yaml
 
 wandb:
   mode: online
 
 trainer:
   eval_cfg:
-    eval_iters: 5
+    eval_iters: 1
 

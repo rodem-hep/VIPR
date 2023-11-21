@@ -1,0 +1,21 @@
+# @package _global_
+
+data:
+  loader_config:
+    batch_size: 512
+    num_workers: 12
+
+wandb:
+  group: mnist
+
+trainer:
+  eval_fw:
+    _target_: src.eval_utils.EvaluateFramework
+  init_noise:
+    datatype: ${data.datatype} #image
+    # device: ${device}
+    size: 4096
+    shape: 
+      images: 
+      - 249
+      - 3
