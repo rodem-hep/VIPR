@@ -7,11 +7,11 @@ defaults:
   - data: default.yaml
   - model: pc_diffusion.yaml
   # - model: image_diffusion.yaml
-  - eval: jet.yaml
+  # - eval: jet.yaml
 
   # - eval: mnist_pc.yaml
 
-  # - eval: default.yaml
+  - eval: default.yaml
   # # - model: unet_cfg.yaml
   # - model: u_perceiver_cfg.yaml
 

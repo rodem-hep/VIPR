@@ -7,7 +7,7 @@ vkq_dims: 3
 embedding_cfg: ${trainer.embedding_cfg}
 # ctxt_dims: null
 upscale_dims: 64
-num_layers: 6
+num_layers: 4
 skip_cnt: True
 
 dense_cfg:
@@ -20,4 +20,4 @@ defaults:
   # - architectures@encoder_cfg: perceiver_cfg.yaml
   # - architectures@decoder_cfg: perceiver_cfg.yaml
   - architectures@encoder_cfg: trans_encoder.yaml
-  # - architectures@decoder_cfg: trans_decoder.yaml
+  - architectures@decoder_cfg: trans_decoder.yaml

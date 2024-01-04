@@ -345,7 +345,7 @@ def main(config):
         test_loader=test_loader.test_dataloader(),
         device=config.device,
         save_path=config.save_path,
-        # eval_fw=test_loader,
+        eval_fw=test_loader,
         wandb=wandb,
         )
 

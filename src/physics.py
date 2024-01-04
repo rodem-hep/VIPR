@@ -19,7 +19,7 @@ from tools import misc
 import tools.visualization.general_plotting as plot
 from src.utils import undo_log_squash, log_squash
 from src.eval_utils import EvaluateFramework
-from src.prepare_data import fill_data_in_pc, matrix_to_point_cloud
+from tools.datamodule.prepare_data import fill_data_in_pc, matrix_to_point_cloud
 from tools.datamodule.pipeline import pc_2_image 
 from tools.datamodule.datamodule import MultiFileDataset, MultiStreamDataLoader, chunks
 from tools.transformations import log_squash, undo_log_squash

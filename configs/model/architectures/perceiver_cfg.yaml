@@ -3,7 +3,7 @@ _target_: tools.transformers.transformer.Perceiver
 _partial_: true
 pcivr_cfg:
   latent_dim: 
-    - 32 # n_cons
+    - 16 # n_cons
     - ${....upscale_dims} #features
   n_processes: 0
   dense_cfg: ${...dense_cfg}

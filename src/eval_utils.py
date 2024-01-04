@@ -3,11 +3,24 @@ import copy
 import wandb
 import numpy as np
 import torch as T
+import scipy.stats as stats
+from tqdm import tqdm
 
 #internal
 from src.utils import fig2img
 import tools.misc as misc
 from tools.visualization import general_plotting as plot
+
+def get_percentile(gen_jet_vars, truth_jet_vars, columns):
+    percentile_dict = {i:[] for i in columns}
+    for i in np.unique(gen_jet_vars.eventNumber):
+        for key in percentile_dict:
+            mask_evt = gen_jet_vars["eventNumber"]==i
+            percentile_dict[key].append(
+                stats.percentileofscore(gen_jet_vars[key][mask_evt],
+                                        truth_jet_vars[key].iloc[int(i)])
+                )
+    return percentile_dict
 
 class EvaluateFramework:
     # def __init__()
@@ -99,5 +112,66 @@ class EvaluateFramework:
             return log
         else:
             return (fig, ax)
+
+def get_spread_of_post(gen_jets, truth_jets, variables:list, norm_width:bool=True):
+    # calculate width of posterior
+    post_width={}
+    x_value_of_width={}
+    
+    # loop over variables
+    for col in variables:
+        post_width[col]=[]
+        x_value_of_width[col]=[]
+        for i in tqdm(range(int(gen_jets["eventNumber"].max()))):
+            mask_evt = gen_jets["eventNumber"]==i
+            post_width[col].append(np.std(gen_jets[mask_evt][col]))
+            x_value_of_width[col].append(truth_jets[col].iloc[i])
+        x_value_of_width[col]=np.array(x_value_of_width[col])
+        post_width[col]=np.array(post_width[col])
+        if norm_width:
+            post_width[col] = post_width[col]/np.array(x_value_of_width[col])
+
+    return post_width, x_value_of_width
+
+def plot_post_spread(post_width, x_value_of_width, var_names:list, bins_wth=10,
+                     x_axis_percentile=None, y_axis_percentile=None, save_path=None, **kwargs):
+    # calculate spread of posteriors as a function of a variable
+
+    for var_name in var_names:
+
+        width=[]
+        mean=[]
+        if kwargs.get("percentile_bins") is None:
+            bins = np.percentile(x_value_of_width[var_name], np.arange(0, 100+bins_wth, bins_wth))
+        else:
+            bins = np.linspace(x_value_of_width[var_name].min(),
+                               x_value_of_width[var_name].max(),
+                               bins_wth)
+        for low,high in zip(bins[:-1], bins[1:]):
+            mask = (x_value_of_width[var_name]>=low) & (x_value_of_width[var_name]<high)
+            width.append(np.percentile(post_width[var_name][mask], [25,75]))
+            mean.append(np.mean(post_width[var_name][mask]))
+
+        width = np.array(width)
+        mean = np.array(mean)
         
+        fig = plt.figure()
+        style={"baseline": None, "edges": bins, "color": "red", "lw":1.5}
+
+        plt.scatter(x_value_of_width[var_name],post_width[var_name], color="blue",
+                    s=2, label=r"$\sigma$ of posterior")
+        plt.stairs(width[:,0], label="Spread", ls="dashed", **style)
+        plt.stairs(mean, label="Mean", **style)
+        plt.stairs(width[:,1], ls="dashed", **style)
         
+        plt.ylabel("Normalised width of posterioirs")
+        plt.xlabel(var_name)
+        if y_axis_percentile is not None:
+            plt.ylim(np.percentile(post_width[var_name], y_axis_percentile))
+
+        if x_axis_percentile is not None:
+            plt.ylim(np.percentile(x_value_of_width[var_name], x_axis_percentile))
+        plt.legend()
+        if save_path is not None:
+            misc.save_fig(fig, f"{save_path}/spread_of_posterior_{var_name}.pdf")
+
