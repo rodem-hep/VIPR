@@ -3,19 +3,20 @@ glob_path: /home/users/a/algren/scratch/trained_networks/diffusion/
 
 jet_vars: ['eta', 'mass', 'phi', 'pt', "px", "py", "pz"]
 
-n_post_to_gen: 512
+n_post_to_gen: 1
 combine_ctxt_size: 1 
 generate_sample: False
 csv_sample_to_load: single #posterior_${eval.size}
-plot_images: False
-save_figures: False
+plot_images: True
+save_figures: True
 
 
 eval:
   _target_: run.evaluation.EvaluatePhysics
-  path_to_model: ${glob_path}/online/jet_2023_11_13_12_14_10_126343
+  # path_to_model: ${glob_path}/online/jet_2023_11_13_12_14_10_126343
   # path_to_model: ${glob_path}/online/jet_2023_12_25_13_37_52_893839
-  size: 5_000
+  path_to_model: ${glob_path}/online/jet_2024_01_02_17_20_06_486693
+  size: 30_000
   device: cuda
   save_generated: False
 

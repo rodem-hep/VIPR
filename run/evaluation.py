@@ -22,7 +22,7 @@ import src.eval_utils as eutils
 import src.diffusion_schemes as ds
 
 hist_kwargs={"style":{"bins": 50},
-             "dist_styles":[{"label": r"jet$_{truth}$"},
+             "dist_styles":[{"label": r"jet$_{Top}}$"},
                             {"label": r"jet$_{diffusion}$"}],
                 "percentile_lst":[1,99],
                 }
@@ -246,20 +246,14 @@ if __name__ == "__main__":
     else:
         raise ValueError("Eval files not avaliable - should be generated and saved!")
 
-    # get truth jets
-    truth_jets = eval_fw.data.jet_vars[:len(gen_jets)]
-    truth_cnts = eval_fw.data.cnts_vars[:len(gen_jets)][
-        eval_fw.data.mask_cnts[:len(gen_jets)]
-        ]
-
     # create pc
     gen_cnts, mask = matrix_to_point_cloud(gen_cnts[["eta", "phi", "pt"]].values,
                                             gen_cnts["eventNumber"].values,
                                         #   num_per_event_max=max_cnts
                                             )
 
-    hist_kwargs={"style":{"bins": 50},"dist_styles":[{"label": "Truth"},
-                                                     {"label": "Generated"}],
+    hist_kwargs={"style":{"bins": 50},"dist_styles":[{"label": "Top"},
+                                                     {"label": "Diffusion"}],
                  "percentile_lst":[0.1,99.9],
                 #  "log_yscale":True
                  }
@@ -267,41 +261,30 @@ if __name__ == "__main__":
     ### plot figures ##
     if "single" in config.csv_sample_to_load: # single generated value
         # plot 1d marginals of cnts
-        hist_kwargs["dist_styles"] = [{"label": r"jet$_{truth}$"}, 
+        hist_kwargs["dist_styles"] = [{"label": r"jet$_{Top}}$"}, 
                                        {"label": r"jet$_{diffusion}$"},
-                                    #    {"label": r"jet$_{obs.}$"},
+                                       {"label": r"jet$_{obs.}$"},
                                        ]
         col_to_plot = ["eta", "phi", "pt", "mass"]
         eval_fw.plot_marginals(truth_jets[col_to_plot].values,
                                 gen_jets[col_to_plot].values,
-                                # obs_jets[col_to_plot].iloc[:len(truth_jets)].values,
+                                obs_jets[col_to_plot].iloc[:len(truth_jets)].values,
                                 col_name=col_to_plot,
                                 hist_kwargs=hist_kwargs,
                                 save_path=f"{save_path}/gen_jets_" if save_figs else None)
 
         hist_kwargs["dist_styles"] = [
-            {"label": r"(jet$_{diffusion}$-jet$_{truth}$)/jet$_{truth}$"},
-            {"label": r"(jet$_{observed}$-jet$_{truth}$)/jet$_{truth}$"}
+            {"label": r"(jet$_{diffusion}$-jet$_{Top}}$)/jet$_{Top}}$"},
+            {"label": r"(jet$_{observed}$-jet$_{Top}}$)/jet$_{Top}}$"}
             ]
         diff_obs = ((obs_jets-truth_jets)/truth_jets)[col_to_plot].iloc[:len(truth_jets)].values
         
         eval_fw.plot_marginals(((gen_jets-truth_jets)/truth_jets)[col_to_plot].values,
-                               diff_obs,#-diff_obs.mean(0),
+                               diff_obs-diff_obs.mean(0),
                                 col_name=col_to_plot,
                                 hist_kwargs=hist_kwargs,
-                                save_path=f"{save_path}/diff_jets_" if save_figs else None)
-        
-        # plot 1d marginals of cnts
-        mask_truth = truth_cnts[:,-1]< 1000000
-        mask_gen = gen_cnts[mask][:,-1]< 1000000
-        hist_kwargs["dist_styles"] = [{"label": r"(cnts$_{truth}$-cnts$_{diffusion}$)/cnts$_{truth}$"
-                                       }]
-        abs_error_jet = (truth_cnts[mask_truth]-gen_cnts[mask][mask_gen])
-        abs_error_jet[:, 1] = phy.rescale_phi(abs_error_jet[:, 1])
-        eval_fw.plot_marginals(abs_error_jet/truth_cnts[mask_truth],
-                                col_name=["eta", "phi", "pt"],
-                                hist_kwargs=hist_kwargs,
-                                save_path=f"{save_path}/diff_cnts_" if save_figs else None)
+                                save_path=f"{save_path}/diff_jets_" if save_figs else None,
+                                ratio_bool=False)
 
         #### plot #-leading cnts
         truth_index_sort = np.argsort(eval_fw.data.cnts_vars[...,-1],-1)[...,::-1]
@@ -309,7 +292,7 @@ if __name__ == "__main__":
         gen_index_sort = np.argsort(gen_cnts[...,-1],-1)[...,::-1]
         if False: # # leading cnts
 
-            # hist_kwargs["dist_styles"] = [{"label": r"cnts$_{truth}$"},
+            # hist_kwargs["dist_styles"] = [{"label": r"cnts$_{Top}}$"},
             #                               {"label": r"cnts$_{diffusion}$"
             #                             }]
             for i in range(100):
@@ -373,9 +356,15 @@ if __name__ == "__main__":
                                     eval_ctxt["scalars"][:100],
                                     mask=eval_ctxt["mask"][:100], reverse=True)
         
-        gen_images = np.clip(np.log(pc_2_image(gen_cnts[:100], style)+1), 0, 1)
-        ctxt_images = np.clip(np.log(pc_2_image(ctxt_cnts, style)+1), 0, 1)
-        truth_images = np.clip(np.log(pc_2_image( eval_fw.data.cnts_vars[:100], style)+1), 0, 1)
+        gen_images = np.clip(np.log(
+            pc_2_image(gen_cnts[:100], mask=mask, style_kwargs=style)
+            +1), 0, 1)
+        ctxt_images = np.clip(np.log(
+            pc_2_image(ctxt_cnts, mask=eval_ctxt["mask"][:100], style_kwargs=style)
+            +1), 0, 1)
+        truth_images = np.clip(np.log(
+            pc_2_image( eval_fw.data.cnts_vars[:100], mask= eval_fw.data.mask_cnts[:len(gen_jets)], style_kwargs=style)
+            +1), 0, 1)
         # ctxt_images = np.clip(np.log(pc_2_image(eval_ctxt["cnts"][:100], style)+1), 0, 1)
         
         

@@ -36,12 +36,18 @@ class EvaluateFramework:
         # run wandb if log is present
         log=kwargs.get("log", False) # not used any more - it was log transform on variables
 
+        # plot ratio
+        ratio_bool = kwargs.get("ratio_bool", True)
+
         # loop over columns
         for nr, name in enumerate(col_name):
-            fig, (ax_1, ax_2) = plt.subplots(
-                2, 1, gridspec_kw={"height_ratios": [3, 1]}, figsize=(8, 6), sharex="col"
-                )
-
+            if ratio_bool:
+                fig, (ax_1, ax_2) = plt.subplots(
+                    2, 1, gridspec_kw={"height_ratios": [3, 1]}, figsize=(8, 6), sharex="col"
+                    )
+            else:
+                fig, ax_1 = plt.subplots(1, figsize=(8, 6))
+                
             # unpack data
             data_col = [d[:,nr] for d in args]
 
@@ -49,14 +55,17 @@ class EvaluateFramework:
             counts_dict, _ = plot.plot_hist(*data_col, ax=ax_1,
                                             **copy.deepcopy(hist_kwargs))
 
-            if len(args)>1:
+            if (len(args)>1) and ratio_bool:
                 # plot ratio between distribution
                 plot.plot_ratio(counts_dict, truth_key="dist_0", ax=ax_2,
                                 zero_line_unc=True,
                                 normalise=len(data_col[0])!=len(data_col[1]),
                                 ylim=[0.8, 1.2], **copy.deepcopy(ratio_kwargs))
-            ax_2.set_xlabel(name)
-
+            if ratio_bool:
+                ax_2.set_xlabel(name)
+            else:
+                ax_1.set_xlabel(name)
+                
             if isinstance(log, dict):
                 log[f"{name}_hist"] =  wandb.Image(fig2img(fig))
                 plt.close(fig)
