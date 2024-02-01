@@ -1,5 +1,6 @@
 # Tag of Torch base image old 2.2.0-cuda11.7-cudnn8-runtime
 # https://pypi.org/project/torch/
+# https://hub.docker.com/r/pytorch/pytorch/tags
 variables:
   TORCHTAG: 2.2.0-cuda12.1-cudnn8-runtime
   IMAGE_TYPE: otcalibbase:latest
