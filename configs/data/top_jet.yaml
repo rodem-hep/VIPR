@@ -20,8 +20,8 @@ train:
     # if the pileup path in defined - it will use pileup path
     pileup_path: ["/home/users/a/algren/scratch/diffusion/pileup/pileup.csv", ]
     pileup_dist_args:
-      mu: 50
-      std: 10
+      mu: 200
+      std: 50
 
 valid:
   _target_: src.physics.JetPhysics

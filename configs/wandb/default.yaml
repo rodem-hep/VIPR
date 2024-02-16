@@ -1,5 +1,9 @@
 project: ${..trainer.init_noise.datatype}-${..data.data_name}-diffusion
+
 entity: malteal
+
 mode: offline # online offline
+
 name: ${data.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+
 group: n_cnts_${data.train.jet_physics_cfg.max_cnstits}

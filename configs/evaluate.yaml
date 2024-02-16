@@ -3,26 +3,60 @@ glob_path: /home/users/a/algren/scratch/trained_networks/diffusion/
 
 jet_vars: ['eta', 'mass', 'phi', 'pt', "px", "py", "pz"]
 
-n_post_to_gen: 1
-combine_ctxt_size: 1 
-generate_sample: False
-csv_sample_to_load: single #posterior_${eval.size}
-plot_images: True
-save_figures: True
+# glob settings
+n_post_to_gen: 1 # >1 generate posterior
+combine_ctxt_size: 1
+csv_sample_to_load: single #posterior_${eval.size} #single 
+plot_images: False
+save_figures: False
+softdrop_path: /srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/
 
-
+# how to run eval fw
 eval:
-  _target_: run.evaluation.EvaluatePhysics
-  # path_to_model: ${glob_path}/online/jet_2023_11_13_12_14_10_126343
-  # path_to_model: ${glob_path}/online/jet_2023_12_25_13_37_52_893839
-  path_to_model: ${glob_path}/online/jet_2024_01_02_17_20_06_486693
-  size: 30_000
+  _target_: run.plot_eval.EvaluatePhysics
+  # path_to_model: ${glob_path}/online/jet_2024_01_02_17_20_06_486693 # most results N(50, 10)
+  # path_to_model: ${glob_path}/online/jet_2024_02_07_19_00_29_358221 # N(200, 10)
+  path_to_model: ${glob_path}/online/jet_2024_02_12_15_29_33_272016 # N(200, 10) correct normalization
+  size: 100_000
   device: cuda
-  save_generated: False
+  format: ".pdf"
+
+  data_cfg: 
+    pileup_dist_args:
+      mu: 200
+      std: 50
+
 
   loader_config:
-    batch_size: 256
+    batch_size: 512
     num_workers: 8
   
   eval_cfg:
     n_diffusion_steps: 100
+
+
+# plot settings
+hist_kwargs:
+  style:
+    bins: 40
+  percentile_lst: [0.1, 99.9]
+  dist_styles:
+    - label: Top
+      color: black
+
+    - label: Vipr
+      color: blue
+
+    - label: SD
+      color: green
+
+    - label: Obs.
+      color: red
+
+
+ratio_kwargs:
+  styles: 
+    - color: black
+    - color: blue
+    - color: green
+    - color: red

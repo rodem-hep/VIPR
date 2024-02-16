@@ -2,9 +2,9 @@ _target_: tools.transformers.transformer.TransformerDecoder
 _partial_: true
 model_dim: ${..upscale_dims}
 dense_cfg: ${..dense_cfg}
-num_layers: 2
+num_layers: 1
 mha_config: 
-  attn_heads: 8
+  attn_heads: ${model.attn_heads}
 ctxt_dim: ${..upscale_dims} 
 init_self_attn: False
 out_norm: False

@@ -1,3 +1,7 @@
+defaults:
+  - _self_
+  # - resume_run.yaml
+
 # To allow hydra to change the current working directory when running the file
 job:
   chdir: True

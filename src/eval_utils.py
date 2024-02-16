@@ -18,12 +18,13 @@ def get_percentile(gen_jet_vars, truth_jet_vars, columns):
             mask_evt = gen_jet_vars["eventNumber"]==i
             percentile_dict[key].append(
                 stats.percentileofscore(gen_jet_vars[key][mask_evt],
-                                        truth_jet_vars[key].iloc[int(i)])
+                                        truth_jet_vars[key].iloc[int(i)],
+                                        kind="weak")
                 )
     return percentile_dict
 
 class EvaluateFramework:
-    # def __init__()
+    format=".png"
     
     def __call__(*args, **kwargs):
         print(args)
@@ -47,13 +48,26 @@ class EvaluateFramework:
                     )
             else:
                 fig, ax_1 = plt.subplots(1, figsize=(8, 6))
-                
+            
             # unpack data
             data_col = [d[:,nr] for d in args]
+            
+            # centering distribution
+            
+            if kwargs.get("sym_percentile", False):
+                percentile = np.percentile(data_col[0],
+                                           kwargs.get("sym_percentile", False))
+
+                hist_kwargs["style"]["bins"] = np.linspace(-percentile,percentile,40)
 
             # plot ratio between distribution
             counts_dict, _ = plot.plot_hist(*data_col, ax=ax_1,
                                             **copy.deepcopy(hist_kwargs))
+
+            # black zero line
+            if kwargs.get("black_line_bool", False):
+                ax_1.axvline(0, 0, 1, color='black', ls="dashed", label="Zero line")
+                plt.legend(loc='best', frameon=False)
 
             if (len(args)>1) and ratio_bool:
                 # plot ratio between distribution
@@ -62,15 +76,16 @@ class EvaluateFramework:
                                 normalise=len(data_col[0])!=len(data_col[1]),
                                 ylim=[0.8, 1.2], **copy.deepcopy(ratio_kwargs))
             if ratio_bool:
-                ax_2.set_xlabel(name)
+                ax_2.set_xlabel(kwargs.get("xlabels", col_name)[nr])
             else:
-                ax_1.set_xlabel(name)
+                ax_1.set_xlabel(kwargs.get("xlabels", col_name)[nr])
+                
                 
             if isinstance(log, dict):
                 log[f"{name}_hist"] =  wandb.Image(fig2img(fig))
                 plt.close(fig)
             if kwargs.get("save_path", None) is not None:
-                misc.save_fig(fig, f"{kwargs['save_path']}{name}.png")
+                misc.save_fig(fig, f"{kwargs['save_path']}{name}_{self.format}")
 
         return log
             
@@ -146,7 +161,7 @@ def plot_post_spread(post_width, x_value_of_width, var_names:list, bins_wth=10,
                      x_axis_percentile=None, y_axis_percentile=None, save_path=None, **kwargs):
     # calculate spread of posteriors as a function of a variable
 
-    for var_name in var_names:
+    for nr, var_name in enumerate(var_names):
 
         width=[]
         mean=[]
@@ -174,13 +189,15 @@ def plot_post_spread(post_width, x_value_of_width, var_names:list, bins_wth=10,
         plt.stairs(width[:,1], ls="dashed", **style)
         
         plt.ylabel("Normalised width of posterioirs")
-        plt.xlabel(var_name)
+        plt.xlabel(kwargs.get("xlabels", var_names)[nr])
+        
         if y_axis_percentile is not None:
             plt.ylim(np.percentile(post_width[var_name], y_axis_percentile))
 
         if x_axis_percentile is not None:
             plt.ylim(np.percentile(x_value_of_width[var_name], x_axis_percentile))
         plt.legend()
+
         if save_path is not None:
             misc.save_fig(fig, f"{save_path}/spread_of_posterior_{var_name}.pdf")
 

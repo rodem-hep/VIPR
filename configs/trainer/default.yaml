@@ -1,4 +1,4 @@
-_target_: run.diffusion.DiffusionModel
+_target_: src.diffusion.DiffusionModel
 # _convert_: object
 
 # evaluate

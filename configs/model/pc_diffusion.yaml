@@ -6,18 +6,19 @@ device: ${device}
 vkq_dims: 3
 embedding_cfg: ${trainer.embedding_cfg}
 # ctxt_dims: null
-upscale_dims: 64
-num_layers: 4
+upscale_dims: 128
+num_layers: 5
+attn_heads: 8
 skip_cnt: True
 
 dense_cfg:
   act_str: gelu
-  n_layers: 2
-  norm: layer
+  n_layers: 0
+  norm: True
+  nfactor: 2
 
 defaults:
   - _self_
-  # - architectures@encoder_cfg: perceiver_cfg.yaml
-  # - architectures@decoder_cfg: perceiver_cfg.yaml
   - architectures@encoder_cfg: trans_encoder.yaml
   - architectures@decoder_cfg: trans_decoder.yaml
+  # - architectures@ctxt_encoder_cfg: perceiver_cfg.yaml

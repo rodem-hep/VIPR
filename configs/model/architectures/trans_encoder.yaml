@@ -4,6 +4,6 @@ model_dim: ${..upscale_dims}
 dense_cfg: ${..dense_cfg}
 num_layers: 1
 mha_config: 
-  attn_heads: 8
+  attn_heads: ${model.attn_heads}
 ctxt_dim: ${..upscale_dims}
 out_norm: False

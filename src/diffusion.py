@@ -1,33 +1,22 @@
-import pyrootutils
+"Run diffusion model"
 
-root = pyrootutils.setup_root(search_from=__file__, pythonpath=True)
-
-import sys
 import os
 import copy
+from glob import glob
 
 import torch as T
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-import omegaconf
-import wandb
-import hydra
 
 # internal
 from tools import misc
 from tools import schedulers
 import src.diffusion_schemes as ds
-# from src.models.image_model import UNet # used on hydra
-from src.utils import fig2img
 import tools.datamodule.pipeline as pl
 import src.positional_encoding as pe
 
-# from src.models.modules import IterativeNormLayer
 from tools.modules import IterativeNormLayer
-# jet_2023_11_13_12_14_10_126343
-
 
 class DiffusionModel(
     # ds.UniformDiffusion
@@ -131,19 +120,53 @@ class DiffusionModel(
                 os.makedirs(f"{save_path}/{i}", exist_ok=True)
                 
             misc.save_yaml(train_cfg, f"{save_path}/diffusion_cfg.yaml")
-        
 
+        # load old model if resumed
+        self.resume_run = False if wandb is None else wandb.run.resumed
+        if self.resume_run:
+            self.load()
+        
+    def load(self, path:str=None):
+        "load model from path. If path is None, load last model from save_path"
+
+        if path is None:
+            path = self.save_path
+
+        path = misc.sort_by_creation_time(glob(f"{path}/states/diff*"))[-1]
+        
+        print(f"loading model from: {path}")
+        
+        state = T.load(path)
+        
+        # TODO remove this after normaliser is saved in correct shape (<09.02.2024)
+        state.update({i:j.flatten() for i,j in state.items() if "norm" in i})
+        
+        # load complet diffusion setup
+        self.load_state_dict(state)
+        
+        # load individual optimizer/network with additional info
+        states_to_load = T.load(path.replace("diffusion_", "model_"))
+
+        self.ema_network.load_state_dict(states_to_load["model"])
+
+        self.optimizer.load_state_dict(states_to_load["optimizer"])
+
+        if "scheduler" in states_to_load:
+            self.lr_scheduler.load_state_dict(states_to_load["scheduler"])
 
     def save(self, path, additional_info={}):
         # save complet diffusion setup
         T.save(self.state_dict(), path)
         
-        # save individual optimizer/network with additional info
+        # save individual optimizer/network/scheduler with additional info
         states_to_save = {
             'model': self.ema_network.state_dict(),
             'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.lr_scheduler.state_dict(),
             }
+
         states_to_save.update(additional_info)
+
         T.save(states_to_save, path.replace("diffusion_", "model_"))
 
 
@@ -203,10 +226,10 @@ class DiffusionModel(
 
         return generated_data
 
-    def run_evaluate(self, test_loader, epoch_nr=0, disable_bar=True):
+    def run_evaluate(self, test_loader, epoch_nr=0, disable_bar=False):
 
         # plot random generated images for visual evaluation of generation quality
-        if (not epoch_nr%self.eval_cfg.eval_iters):# & (epoch_nr>0):
+        if (not epoch_nr%self.eval_cfg.eval_iters) & False:# & (epoch_nr>0):
 
             # generate sample
             generated_data = self.generate_samples(self.initial_noise,
@@ -271,8 +294,12 @@ class DiffusionModel(
     def run_training(self):
         
         #progress bar for training
-        pbar = tqdm(range(self.train_cfg.num_epochs))
+        starting_epoch = self.wandb.summary.get("_step", 0)
+        
+        starting_epoch+= 1 if self.resume_run else 0
 
+        # init progress bar
+        pbar = tqdm(range(starting_epoch, self.train_cfg.num_epochs))
 
         for ep in pbar:
 
@@ -299,61 +326,16 @@ class DiffusionModel(
 
             self.log["lr"] = self.optimizer.state_dict()["param_groups"][0]["lr"]
             
-            if self.run_eval & True: # TODO not using the save model yet
-                if self.log["noise_loss_valid"]<self.noise_loss_best:
-                    self.save(f"{self.save_path}/states/diffusion_{ep}.pth")
-                    self.noise_loss_best = self.log["noise_loss_valid"]
+            if self.run_eval & (self.log["noise_loss_valid"]<self.noise_loss_best):
+                # save model
+                self.save(f"{self.save_path}/states/diffusion_{ep}.pth")
 
+                # log validation loss
+                self.noise_loss_best = self.log["noise_loss_valid"]
+
+            # log epoch
             self.log["epoch"] = ep
 
             if self.wandb is not None:
                 self.wandb_log()
 
-
-
-@hydra.main(version_base=None, config_path=str(root / "configs"), config_name="config")
-def main(config):
-    #dataloader
-    train_loader = hydra.utils.instantiate(config.data.train,
-                                           loader_config=config.data.loader_config)
-    if "jet" in config.data.valid._target_.lower():
-        test_loader = hydra.utils.instantiate(config.data.valid,
-                                            loader_config=config.data.loader_config,
-                                            max_cnstits=train_loader.dataset.max_cnstits,
-                                            datatype=train_loader.dataset.datatype,
-                                            )
-    else:
-        test_loader = hydra.utils.instantiate(config.data.valid,
-                                            loader_config=config.data.loader_config,
-                                            )
-    
-    # init W&B
-    wandb.config = omegaconf.OmegaConf.to_container(
-        config, resolve=True, throw_on_missing=True
-    )
-
-    wandb.init(config=config, **config.wandb)
-
-    # init network
-    network=hydra.utils.instantiate(config.model,ctxt_dims=train_loader.get_ctxt_shape())
-
-    # init diffusion
-    diffusion = hydra.utils.instantiate(
-        config.trainer,
-        network=network,
-        train_loader=train_loader.train_dataloader(),
-        test_loader=test_loader.test_dataloader(),
-        device=config.device,
-        save_path=config.save_path,
-        eval_fw=test_loader,
-        wandb=wandb,
-        )
-
-    print(f"Trainable parameters: {diffusion.network.count_trainable_parameters()}")
-    wandb.config.update({"Model Parameters": diffusion.network.count_trainable_parameters()})
-
-    diffusion.run_training()
-
-        
-if __name__ == "__main__":
-    main()

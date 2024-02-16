@@ -16,15 +16,16 @@ import src.positional_encoding as pe
 
 class PCDiffusion(nn.Module):
     def __init__(self, vkq_dims, ctxt_dims:Union[int, dict]=None, num_layers:int =1,
-                 decoder_cfg:dict=None, encoder_cfg:dict=None, dense_cfg:dict=None,
+                 decoder_cfg:dict=None, encoder_cfg:dict=None, ctxt_encoder_cfg:dict=None, dense_cfg:dict=None,
                  upscale_dims:int=64, embedding_cfg=None, skip_cnt:bool =False,
-                 device:str="cuda"):
+                 device:str="cuda", **kwargs):
         super().__init__()
         self.vkq_dims = vkq_dims
         self.ctxt_dims = ctxt_dims
         self.upscale_dims= upscale_dims
         self.decoder_cfg=decoder_cfg
         self.encoder_cfg=encoder_cfg
+        self.ctxt_encoder_cfg=ctxt_encoder_cfg
         self.device = device
         self.skip_cnt=skip_cnt
         self.dense_cfg=dense_cfg if dense_cfg!=None else {}
@@ -41,7 +42,6 @@ class PCDiffusion(nn.Module):
         self.get_network()
 
     def get_network(self) -> None:
-        
         # init cnts
         self.init_dense = DenseNetwork(self.vkq_dims+self.upscale_dims,
                                        self.upscale_dims, **self.dense_cfg)
@@ -67,13 +67,17 @@ class PCDiffusion(nn.Module):
         
         if self.encoder_cfg is not None:
 
-            for _ in range(self.num_layers):
+            for nr in range(self.num_layers):
 
                 if self.decoder_cfg is not None:
                     self.decoder_layers.append(self.decoder_cfg())
 
-                if ("cnts" in self.ctxt_dims):
+                if ("cnts" in self.ctxt_dims) & (self.ctxt_encoder_cfg is not None):
+                    self.ctxt_encoder_layers.append(self.ctxt_encoder_cfg()) # using perceivers
+                    self.glob_token_out = self.ctxt_encoder_layers[nr].layers[0].decode_cfg is None
+                elif ("cnts" in self.ctxt_dims):
                     self.ctxt_encoder_layers.append(self.encoder_cfg())
+                    self.glob_token_out=False
 
                 self.inpt_encoder_layers.append(self.encoder_cfg())
                 
@@ -121,10 +125,9 @@ class PCDiffusion(nn.Module):
             ctxt_cnts = ctxt["cnts"].clone().to(self.device)
             ctxt_mask = ctxt["mask"].to(self.device)
             input_ctxt = self.init_conv_ctxt(ctxt_cnts, ctxt_scalars)
-        else:
-            input_ctxt = input_vkq.clone()
-            if mask is not None:
-                ctxt_mask = mask.clone()
+            # clone the cnts ctxt for perceiver
+            input_ctxt_clone = input_ctxt.clone()
+            ctxt_mask_clone = ctxt_mask.clone()
             
         # network starts
         # simple MLP
@@ -142,10 +145,15 @@ class PCDiffusion(nn.Module):
 
                 # self attention for ctxt
                 if len(self.ctxt_encoder_layers)>0:
-                    input_ctxt = self.ctxt_encoder_layers[i](input_ctxt,
-                                                            mask_vk=ctxt_mask,
-                                                            ctxt=ctxt_scalars)
-
+                    if (self.ctxt_encoder_cfg is not None) and (self.glob_token_out): # pool with perceiver
+                        input_ctxt = self.ctxt_encoder_layers[i](input_ctxt_clone,
+                                                                mask_vk=ctxt_mask_clone,
+                                                                ctxt=ctxt_scalars)
+                        ctxt_mask = T.ones(input_ctxt.shape[:2]).bool().to(self.device)
+                    else:
+                        input_ctxt = self.ctxt_encoder_layers[i](input_ctxt,
+                                                                mask_vk=ctxt_mask,
+                                                                ctxt=ctxt_scalars)
             # Decode attention
             if len(self.decoder_layers)>0:
                 input_vkq = self.decoder_layers[i](input_vkq, input_ctxt,

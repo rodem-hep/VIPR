@@ -4,15 +4,16 @@ data:
   train:
     n_files: null
     jet_physics_cfg:
-      max_cnstits: 202
-      max_ctxt_cnstits: 302
+      max_cnstits: 175
+      max_ctxt_cnstits: 400
   loader_config:
     batch_size: 512
     num_workers: 8
 
 
 # model:
-#   num_layers: 4
+  # num_layers: 4
   # defaults:
   # - override architectures@encoder_cfg: perceiver_cfg.yaml
   # - override architectures@decoder_cfg: perceiver_cfg.yaml
+  # - architectures@ctxt_encoder_cfg: perceiver_cfg.yaml

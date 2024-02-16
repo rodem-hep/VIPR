@@ -363,7 +363,7 @@ def dump_hlvs(
     # rel_jet:
     # file_path: Path,
     out_path: Path,
-    R: float = 0.8,
+    R: float = 1,
     p: float = -1.0,
     # plot: bool = False,
     addi_col: dict=None
@@ -462,5 +462,16 @@ def dump_hlvs(
             for k, v in hlvs.items():
                 file.create_dataset(k, data=v)
     else:
+        hlvs_dict = dict(hlvs)
+        
+        # to remove features with incorrect length
+        not_correct_len = [i for i,j in hlvs_dict.items()
+                           if len(j) != len(hlvs_dict["mass"])]
+        
+        print(f"Features with incorrect length: {not_correct_len}")
+
+        for i in not_correct_len:
+            hlvs_dict.pop(i)
+
         # Save all the data to an HDF file with pandas
-        pd.DataFrame.from_dict(hlvs).to_hdf(out_path, key='df', mode='w')
+        pd.DataFrame.from_dict(hlvs_dict).to_hdf(out_path, key='df', mode='w')

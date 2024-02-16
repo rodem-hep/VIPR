@@ -5,9 +5,10 @@ defaults:
 #  - run_100_cnts.yaml
  - run_full_cnts.yaml
 #  - run_mnist.yaml
+#  - resume.yaml
 
 wandb:
-  mode: offline
+  mode: online
 
 trainer:
   eval_cfg:

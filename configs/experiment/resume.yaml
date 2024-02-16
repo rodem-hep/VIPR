@@ -1,0 +1,9 @@
+# @package _global_
+
+hydra:
+  output_subdir: null
+
+wandb:
+  name: jet_2024_02_09_17_40_26_256536
+
+resume: "must"
