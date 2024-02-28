@@ -1,0 +1,28 @@
+_target_: run.TransFlow
+
+device: ${device}
+
+data_dims:
+  cnts: 3
+  scalars: 4
+
+flow_conf:
+  xz_dim: 1
+  ctxt_dim: 128
+  nstacks: 3
+  param_func: made
+  invrt_func: "rqs"
+  base_dist: normal
+  device: ${device}
+  
+
+
+
+
+
+
+
+
+
+
+

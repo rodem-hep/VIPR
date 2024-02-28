@@ -7,7 +7,7 @@ vkq_dims: 3
 embedding_cfg: ${trainer.embedding_cfg}
 # ctxt_dims: null
 upscale_dims: 128
-num_layers: 5
+num_layers: 4
 attn_heads: 8
 skip_cnt: True
 

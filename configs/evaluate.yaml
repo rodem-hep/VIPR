@@ -1,13 +1,13 @@
 # @package _global_
-glob_path: /home/users/a/algren/scratch/trained_networks/diffusion/
+glob_path: /srv/beegfs/scratch/users/a/algren/trained_networks/diffusion/
 
-jet_vars: ['eta', 'mass', 'phi', 'pt', "px", "py", "pz"]
+jet_vars: ['eta', 'phi', 'pt', 'mass'] #, "px", "py", "pz"]
 
 # glob settings
 n_post_to_gen: 1 # >1 generate posterior
 combine_ctxt_size: 1
-csv_sample_to_load: single #posterior_${eval.size} #single 
-plot_images: False
+csv_sample_to_load: single # posterior_${eval.size} #single 
+plot_images: True
 save_figures: False
 softdrop_path: /srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/
 
@@ -16,20 +16,21 @@ eval:
   _target_: run.plot_eval.EvaluatePhysics
   # path_to_model: ${glob_path}/online/jet_2024_01_02_17_20_06_486693 # most results N(50, 10)
   # path_to_model: ${glob_path}/online/jet_2024_02_07_19_00_29_358221 # N(200, 10)
-  path_to_model: ${glob_path}/online/jet_2024_02_12_15_29_33_272016 # N(200, 10) correct normalization
-  size: 100_000
+  # path_to_model: ${glob_path}/online/jet_2024_02_12_15_29_33_272016 # N(200, 10) correct normalization
+  path_to_model: ${glob_path}/online/jet_2024_02_17_14_17_07_224394 # N(60, 10) correct normalization
+  size: 100_000 # 100_000 / 2000
   device: cuda
   format: ".pdf"
 
   data_cfg: 
     pileup_dist_args:
-      mu: 200
-      std: 50
+      mu: 300
+      std: 0
 
 
   loader_config:
-    batch_size: 512
-    num_workers: 8
+    batch_size: 256
+    num_workers: 4
   
   eval_cfg:
     n_diffusion_steps: 100

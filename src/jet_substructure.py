@@ -3,20 +3,21 @@
 All of these are essentially based around pyjet.PseudoJet objects and/or
 their constituent particles and calculates some of the most popular
 high-level substructure observables.
+
+
 """
 
 from pathlib import Path
 from typing import Union
 
 import h5py
-import matplotlib.pyplot as plt
 import numpy as np
 import pyjet
 from dotmap import DotMap
 from tqdm import tqdm
 import pandas as pd
 
-from src.physics import numpy_locals_to_mass_and_pt
+from tools.physics.detector_coords import numpy_locals_to_mass_and_pt
 
 
 def dij(

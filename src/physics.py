@@ -795,7 +795,8 @@ if __name__ == "__main__":
         legend_kwargs={"loc": "upper right", 'prop': {'size': 16}}
         for i,name, xlabel in zip(range(multi_data["scalars"].shape[1]),
                           physics.jet_scalars_cols,
-                          [r"$\eta_{truth}-\eta_{Obs.}$", r"$\phi_{truth}-\phi_{Obs.}$",
+                          [r"$\eta", r"$\phi$",
+                        #   [r"$\eta_{truth}-\eta_{Obs.}$", r"$\phi_{truth}-\phi_{Obs.}$",
                            r"$p_{\mathrm{T}}[\mathrm{GeV}]$", "Mass [GeV]",
                            r"$\mu$", "Number of cnsts."]):
             

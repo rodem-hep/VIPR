@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+  - _self_
+
+  - trainer: default.yaml
+  - data: default.yaml
+  - model: flow.yaml
+  - eval: default.yaml
+
+  # - wandb: default.yaml
+  - hydra: default.yaml
+  - experiment: run_flow.yaml
+
+path: /home/users/a/algren/scratch/trained_networks/diffusion/flow/
+
+save_path: ${path}/${wandb.name}
+
+wandb:
+  name: p_N_flow_${data.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+
+device: cuda

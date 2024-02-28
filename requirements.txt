@@ -2,6 +2,7 @@
 torchvision
 torchmetrics
 pytorch-lightning
+nflows
 
 # data science / plotting
 numpy

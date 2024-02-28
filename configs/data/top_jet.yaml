@@ -18,10 +18,10 @@ train:
     # ctxt variables
     jet_scalars_cols: ["eta", "phi", "pt", "mass", "mu", "n_cnts"]
     # if the pileup path in defined - it will use pileup path
-    pileup_path: ["/home/users/a/algren/scratch/diffusion/pileup/pileup.csv", ]
+    pileup_path: ["/srv/beegfs/scratch/users/a/algren/diffusion/pileup/pileup.csv", ]
     pileup_dist_args:
-      mu: 200
-      std: 50
+      mu: 60
+      std: 10
 
 valid:
   _target_: src.physics.JetPhysics

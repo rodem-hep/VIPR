@@ -39,11 +39,9 @@ if __name__ == "__main__":
     name = ("" if "posterior" in config.csv_sample_to_load
             else get_pileup_name(eval_fw.data.pileup_dist_args))
     
-
-
     # if int(name.split("_")[-1])!=0: # TODO should be removed at some point
     softdrop=glob(f"{config.softdrop_path}/*softdrop*hlv*z05*b1*")
-    truth_file = glob(f"{config.eval.path_to_model}/eval_files/*truth*{config.csv_sample_to_load}*.h5")[0]
+    truth_file = glob(f"{config.eval.path_to_model}/eval_files/*truth*.h5")[0]
     # else:
     #     truth_file = glob(f"{config.eval.path_to_model}/eval_files/*truth*{file_type}")[0]
     #     softdrop=glob(f"{config.softdrop_path}/data/*{name}*softdrop*HLV*")
@@ -61,11 +59,13 @@ if __name__ == "__main__":
     # substructure variables
     jet_vars = ["tau_21", "tau_32", "d12", "d23", "d2", "mass", "pt"]
     jet_labels = [r"$\tau_{21}$", r"$\tau_{32}$", r"d$_{12}$", r"d$_{23}$",
-                r"d$_{2}$", "Mass [GeV]", r"p$_T$ [GeV]"]
+                r"d$_{2}$", "Mass", r"p$_\mathrm{T}$"]
 
     if "posterior" in config.csv_sample_to_load:
         save_path=save_path+"posteriors/"
         os.makedirs(save_path, exist_ok=True)
+        if "eventNumber" not in generated:
+            generated["eventNumber"] = np.repeat(np.arange(len(generated)//512),512)
         percentile_dict = eutils.get_percentile(generated, truth,
                                             columns=jet_vars)
         x = np.linspace(0, 0.5, 50)
@@ -73,11 +73,11 @@ if __name__ == "__main__":
         fig_inte, ax_inte = plt.subplots(1,1, figsize=(8,6), squeeze=True)
         for nr, i in enumerate(percentile_dict):
             fig, (ax_1, ax_2) = plt.subplots(2, 1, gridspec_kw={"height_ratios": [3, 1]}, figsize=(8, 6), sharex="col")
-            counts, _ = plot.plot_hist(np.random.uniform(0, 100, size=1_000_000), percentile_dict[i],
+            counts, _ = plot.plot_hist(np.random.uniform(0, 100, size=10_000_000), percentile_dict[i],
                                         style={"bins":20, "range": [0,100]},
                                         dist_styles = [{"label": "Uniform", "color": "black", "ls": "dashed"},
                                                         {"label": "Vipr", "color": "blue"}],
-                                        weights=[np.ones(1_000_000)/1_000_000,
+                                        weights=[np.ones(10_000_000)/10_000_000,
                                                     np.ones_like(percentile_dict[i])/len(percentile_dict[i])],
                                         ax=ax_1,
                                         legend_kwargs={"title": jet_labels[nr]}
@@ -94,24 +94,16 @@ if __name__ == "__main__":
             if config.save_figures:
                 misc.save_fig(fig, f"{save_path}/posterior_quantiles_{i}.pdf")
 
-            # x = np.random.uniform(0, 100, size=len(percentile_dict[i]))
-            # x = np.sort(x).cumsum()
-            # counts = np.sort(percentile_dict[i]).cumsum()
             quantiles_1 = np.quantile(percentile_dict[i], x)
             quantiles_2 = np.quantile(percentile_dict[i], (1-x))
-            ax_inte.plot(
-                    # x/x[-1],
-                    # counts0.cumsum(),
-                    # counts/counts[-1],
-                    # counts1.cumsum(),
-                    (quantiles_2-quantiles_1)[::-1]/100,
-                np.linspace(0, 1, len(x)), #bins[:-1]+np.diff(bins)/2, # 
-                    label=jet_labels[nr])
+            ax_inte.plot( (quantiles_2-quantiles_1)[::-1]/100,
+                         np.linspace(0, 1, len(x)),
+                         label=jet_labels[nr])
 
         ax_inte.plot(np.linspace(0, 1, len(counts)),
                     np.linspace(0, 1, len(counts)),
-                    ls="dashed", color="black",
-                    label="Well-calibrated")
+                    ls="dashed", color="black")
+
         ax_inte.legend(frameon=False)
         ax_inte.set_xlabel("Nominal coverage")
         ax_inte.set_ylabel("Empirical coverage")
@@ -165,8 +157,8 @@ if __name__ == "__main__":
 
         hist_kwargs["dist_styles"] = [
             {"label": "Vipr", "color": "blue"},
-            {"label": "Obs.", "color": "red"},
             {"label": "SoftDrop", "color": "green"},
+            {"label": "Obs.", "color": "red"},
             ]
 
         min_size = min(len(truth), len(generated), len(softdrop_jet))
@@ -215,7 +207,7 @@ if __name__ == "__main__":
             black_line_bool=True,
             sym_percentile=99.99
             )
-        sys.exit()
+        # sys.exit()
 
         truth_file = glob(f"{config.eval.path_to_model}/eval_files/*truth*{config.csv_sample_to_load}.h5")[0]
         truth = pd.read_hdf(truth_file)
@@ -284,8 +276,6 @@ if __name__ == "__main__":
 
             # ax.plot(mu_lst,np.zeros_like(mu_lst),label = "Zero line",
             #          color="black", ls="dotted", lw=3)
-            ax_m.plot(mu_lst,np.zeros_like(mu_lst),label = "Zero line",
-                     color="black", ls="dotted", lw=3)
 
             ax_m.plot(mu_lst, obs_mu["median"][i, :],label="Obs. jet", color="red")
             ax.plot(mu_lst, obs_mu["width"][i, :],label="Obs. jet", color="red")

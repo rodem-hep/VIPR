@@ -5,7 +5,7 @@ data:
     n_files: null
     jet_physics_cfg:
       max_cnstits: 175
-      max_ctxt_cnstits: 400
+      max_ctxt_cnstits: 400 # 275 / 400
   loader_config:
     batch_size: 512
     num_workers: 8

@@ -1,10 +1,10 @@
 # gridsearch settings
 setting:
-  job-name: diff_pileup_train
+  job-name: diff_pileup_eval
   chdir: /home/users/a/algren/work/diffusion/
   mem: 32GB
-  time: "07-00:00:00"
-  gres: gpu:1,VramPerGpu:20G
+  time: "00-12:00:00"
+  gres: gpu:1,VramPerGpu:11G
   cpus-per-task: 8
   exclude: ""
 
@@ -12,23 +12,24 @@ run_args:
   singularity_instance: /home/users/a/algren/singularity_images/diffusion-torch-2.2.0.sif
 
 # train
-runfile: run/run_diffusion.py
+# runfile: run/run_diffusion.py
+runfile: run/run_eval.py
 
 # training settings
 # model.num_layers: [5,4]
 # model.upscale_dims: [128]
 # model.dense_cfg.nfactor: [2]
 # model.attn_heads: [8]
-wandb.name: [
-          # jet_2024_02_07_19_00_29_358221,
-            #   jet_2024_02_07_15_47_11_754449,
-            # jet_2024_02_06_11_34_57_111024,
-            # jet_2024_02_06_09_38_47_704042
-            jet_2024_02_06_09_27_49_009275]
+# wandb.name: [
+#           # jet_2024_02_07_19_00_29_358221,
+#             #   jet_2024_02_07_15_47_11_754449,
+#             # jet_2024_02_06_11_34_57_111024,
+#             # jet_2024_02_06_09_38_47_704042
+#             jet_2024_02_06_09_27_49_009275]
 
-wandb.mode: [online]
+# wandb.mode: [online]
 
 # # # eval
 # runfile: run/run_eval.py
 
-# eval.data_cfg.pileup_dist_args.mu: [80, 90, 100, 150, 200]
+eval.data_cfg.pileup_dist_args.mu: [50, 60, 250, 300]

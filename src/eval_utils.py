@@ -66,7 +66,7 @@ class EvaluateFramework:
 
             # black zero line
             if kwargs.get("black_line_bool", False):
-                ax_1.axvline(0, 0, 1, color='black', ls="dashed", label="Zero line")
+                ax_1.axvline(0, 0, 1, color='black', ls="dashed")
                 plt.legend(loc='best', frameon=False)
 
             if (len(args)>1) and ratio_bool:

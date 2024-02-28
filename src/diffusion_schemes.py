@@ -265,10 +265,12 @@ class ElucidatingDiffusion(Solvers):
         # norm conditions
         if ("cnts" in ctxt) & (self.ctxt_normaliser is not None):
             ctxt["cnts"] = self.ctxt_normaliser(ctxt["cnts"],
-                                                mask=ctxt["mask"])
+                                                mask=ctxt["mask"],
+                                                training=training)
         
         if ("scalars" in ctxt) & (self.ctxt_scalar_normaliser is not None):
-            ctxt["scalars"] = self.ctxt_scalar_normaliser(ctxt["scalars"])
+            ctxt["scalars"] = self.ctxt_scalar_normaliser(ctxt["scalars"],
+                                                          training=training)
 
         # preconditions
         c_skip, c_out, c_input = self.precondition(sigma)
