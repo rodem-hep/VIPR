@@ -408,12 +408,16 @@ class JetPhysics(EvaluateFramework, Dataset):
                 event[~mask]=0
 
             # add data to dict
-            data["mask"] =  self.mask_cnts[idx]
-            # data["images"] = self.cnts_vars_rel[idx]
-            data["images"] = self.relative_pos(self.cnts_vars[idx][None],jet_var, mask=data["mask"][None])[0]
-            data["images"][~data["mask"]]=0
+            if "pc" in self.datatype:
+                data["mask"] =  self.mask_cnts[idx]
+                # data["images"] = self.cnts_vars_rel[idx]
+                data["images"] = self.relative_pos(self.cnts_vars[idx][None],jet_var, mask=data["mask"][None])[0]
+                data["images"][~data["mask"]]=0
 
-            data["images"] = np.float32(data["images"])
+                data["images"] = np.float32(data["images"])
+
+            elif self.datatype == "N":
+                data["images"] = np.array([np.float32(self.mask_cnts[idx].sum())])
 
             # insert cnts into ctxt
             data["ctxt"]["cnts"] = np.float32(event)
@@ -660,13 +664,20 @@ class MultiJetFiles(MultiStreamDataLoader):
                                      batch_size=self.loader_config["batch_size"],
                                      processing_func=self._process_data)
                     for path in split_data_lst]
+        # datasets = [len(JetPhysics(jet_path=path,**self.jet_physics_cfg))
+        #             for path in split_data_lst]
         
         self.dataset = JetPhysics(jet_path = data_list[:kwargs.get("n_valid_files", 4)],
                                   **self.jet_physics_cfg)
-
+        
+        # calculate number of batches. There are 9999 events in each file
+        self.n_batches = sum([len(i) for i in split_data_lst])*9999//loader_config["batch_size"]
         loader_config["num_workers"] = 1
 
         super().__init__(datasets=datasets, data_kw=loader_config)
+    
+    def __len__(self):
+        return self.n_batches
 
     def _shape(self): # TODO to be removed
         return self.dataset._shape()

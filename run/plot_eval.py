@@ -322,10 +322,11 @@ if __name__ == "__main__":
     col_to_plot = ["eta", "phi", "pt", "mass"]
     jet_labels = [r"$\eta$", r"$\phi$", "Mass [GeV]", r"p$_\mathrm{T}$ [GeV]"]
 
-    softdrop=glob(f"{config.softdrop_path}/softdrop*")
+    softdrop=glob(f"{config.softdrop_path}/softdrop/zcut_0_05_beta_2/*{name}*")
 
-    softdrop_cnts = np.load(softdrop[-2], allow_pickle=True)[..., [1,2,0]]
-    softdrop_jet = pd.read_hdf(softdrop[-1])
+
+    softdrop_cnts = np.load(softdrop[1], allow_pickle=True)[..., [1,2,0]]
+    softdrop_jet = pd.read_hdf(softdrop[0])
 
     ### plot figures ##
     if "single" in config.csv_sample_to_load: # single generated value

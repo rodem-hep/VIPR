@@ -36,4 +36,4 @@ tqdm
 jupyterlab
 python-gitlab
 pyrootutils
-
+pyjet

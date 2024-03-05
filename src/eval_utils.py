@@ -11,16 +11,25 @@ from src.utils import fig2img
 import tools.misc as misc
 from tools.visualization import general_plotting as plot
 
-def get_percentile(gen_jet_vars, truth_jet_vars, columns):
-    percentile_dict = {i:[] for i in columns}
-    for i in np.unique(gen_jet_vars.eventNumber):
-        for key in percentile_dict:
-            mask_evt = gen_jet_vars["eventNumber"]==i
-            percentile_dict[key].append(
-                stats.percentileofscore(gen_jet_vars[key][mask_evt],
-                                        truth_jet_vars[key].iloc[int(i)],
-                                        kind="weak")
+def get_percentile(gen_jet_vars, truth_jet_vars, columns, numpy_version=False):
+    if numpy_version:
+        percentile_dict=[]
+        for i in range(len(truth_jet_vars)):
+            percentile_dict.append(
+                stats.percentileofscore(gen_jet_vars[i], truth_jet_vars[i], kind="weak")
                 )
+        percentile_dict = np.array(percentile_dict)
+            
+    else:
+        percentile_dict = {i:[] for i in columns}
+        for i in np.unique(gen_jet_vars.eventNumber):
+            for key in percentile_dict:
+                mask_evt = gen_jet_vars["eventNumber"]==i
+                percentile_dict[key].append(
+                    stats.percentileofscore(gen_jet_vars[key][mask_evt],
+                                            truth_jet_vars[key].iloc[int(i)],
+                                            kind="weak")
+                    )
     return percentile_dict
 
 class EvaluateFramework:
@@ -29,7 +38,7 @@ class EvaluateFramework:
     def __call__(*args, **kwargs):
         print(args)
 
-    def plot_marginals(self, *args, col_name, hist_kwargs={}, ratio_kwargs={}, **kwargs):
+    def plot_marginals(self, *args, col_name:list, hist_kwargs={}, ratio_kwargs={}, **kwargs):
 
         if "normalise" not in hist_kwargs:
             hist_kwargs["normalise"]=len(args)>1

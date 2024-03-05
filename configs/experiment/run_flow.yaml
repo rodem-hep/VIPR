@@ -2,23 +2,19 @@
 wandb:
   mode: online
 
-trainer:
-  eval_cfg:
-    eval_iters: 10
-
 data:
   loader_config:
-    batch_size: 512
-    num_workers: 2
+    batch_size: 256
+    num_workers: 8
 
   data_name: jet_flow
-  datatype: pc
+  datatype: "N"
   train:
     _target_: src.physics.MultiJetFiles
     _convert_: object
     jet_path: /srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/path_lists.yaml
     sub_col: train
-    n_files: 1
+    n_files: 100
 
     jet_physics_cfg:
       max_cnstits: 175 #322
@@ -40,7 +36,7 @@ data:
 
     jet_path: ${..train.jet_path}
     sub_col: valid
-    n_files: 1
+    n_files: 2
 
     pileup_path: ${..train.jet_physics_cfg.pileup_path}
 

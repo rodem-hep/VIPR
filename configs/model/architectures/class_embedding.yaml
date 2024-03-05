@@ -1,0 +1,45 @@
+_target_: tools.transformers.transformer.ClassEmbedding
+_partial_: true
+
+# in dim
+cls_dim_in: ${model.cls_dim_in}
+
+# d_model
+d_model: 256
+
+# out dim
+cls_dim_out: ${model.flow_conf.ctxt_dim}
+
+# conditional dimensions
+ctxt_dim_in: ${model.data_dims.scalars}
+ctxt_dim_out: 16
+
+encoder:
+  _target_: tools.transformers.transformer.TransformerEncoder
+  _partial_: true
+  dense_cfg: ${model.dense_conf}
+  num_layers: 4
+  # n_registers: 8
+  mha_config: 
+    attn_heads: 8
+  ctxt_dim: ${..ctxt_dim_out}
+  out_norm: False
+
+decoder:
+  _target_: tools.transformers.transformer.TransformerDecoder
+  _partial_: true
+  dense_cfg: ${model.dense_conf}
+  num_layers: 4
+  mha_config: 
+    attn_heads: 8
+  ctxt_dim: ${..ctxt_dim_out} 
+  init_self_attn: False
+  out_norm: False
+
+dense:
+  _target_: tools.transformers.transformer.DenseNetwork
+  _partial_: true
+  act_str: gelu
+  n_layers: 0
+  nfactor: 2
+  norm: layer

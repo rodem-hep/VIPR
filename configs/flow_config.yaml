@@ -3,20 +3,25 @@
 defaults:
   - _self_
 
+  # model
   - trainer: default.yaml
   - data: default.yaml
   - model: flow.yaml
   - eval: default.yaml
 
-  # - wandb: default.yaml
+  # misc
   - hydra: default.yaml
+  - callbacks: default.yaml
+  - wandb: logger.yaml
   - experiment: run_flow.yaml
 
-path: /home/users/a/algren/scratch/trained_networks/diffusion/flow/
+path: /srv/beegfs/scratch/users/a/algren/trained_networks/diffusion/flow/
 
-save_path: ${path}/${wandb.name}
+save_path: ${path}/${name}
 
-wandb:
-  name: p_N_flow_${data.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+project: p_N_flow
+name: ${data.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+# resume: ${full_resume}
+# tags: ${tags}
 
 device: cuda

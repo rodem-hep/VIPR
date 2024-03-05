@@ -4,15 +4,12 @@ import pyrootutils
 root = pyrootutils.setup_root(search_from=__file__, pythonpath=True)
 import hydra
 from glob import glob
-import h5py
 import matplotlib.pyplot as plt
 import numpy as np
-from copy import deepcopy
 import pandas as pd
 from omegaconf import OmegaConf
 import os 
-from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
+from tqdm import tqdm
 
 from tools import misc
 from tools.visualization import general_plotting as plot
@@ -22,33 +19,47 @@ from sklearn.calibration import calibration_curve
 
 def get_width(values):
     return (np.percentile(values, 75, 0)-np.percentile(values, 25, 0))/1.349
+def relative_error(pred, truth):
+    return (pred-truth[:len(pred)])/truth[:len(pred)]
 
-linestyle_str = [
-     ('solid', 'solid'),      # Same as (0, ()) or '-'
-     ('dotted', 'dotted'),    # Same as (0, (1, 1)) or ':'
-     ('dashed', 'dashed'),    # Same as '--'
-     ('dashdot', 'dashdot')]
+linestyle_tuple = [
+     ('loosely dotted',        (0, (1, 10))),
+     ('dotted',                (0, (1, 1))),
+     ('densely dotted',        (0, (1, 1))),
+     ('long dash with offset', (5, (10, 3))),
+     ('loosely dashed',        (0, (5, 10))),
+     ('dashed',                (0, (5, 5))),
+     ('densely dashed',        (0, (5, 1))),
+
+     ('loosely dashdotted',    (0, (3, 10, 1, 10))),
+     ('dashdotted',            (0, (3, 5, 1, 5))),
+     ('densely dashdotted',    (0, (3, 1, 1, 1))),
+
+     ('dashdotdotted',         (0, (3, 5, 1, 5, 1, 5))),
+     ('loosely dashdotdotted', (0, (3, 10, 1, 10, 1, 10))),
+     ('densely dashdotdotted', (0, (3, 1, 1, 1, 1, 1)))]
+
 
 if __name__ == "__main__":
     config = misc.load_yaml(str(root/"configs/evaluate.yaml"))
+
     eval_fw = hydra.utils.instantiate(config.eval)
     save_path = f"{config.eval.path_to_model}/figures/"
     size=None #512*4
     file_type = ".h5"
     
-    name = ("" if "posterior" in config.csv_sample_to_load
-            else get_pileup_name(eval_fw.data.pileup_dist_args))
+    name = get_pileup_name(eval_fw.data.pileup_dist_args)
     
-    # if int(name.split("_")[-1])!=0: # TODO should be removed at some point
-    softdrop=glob(f"{config.softdrop_path}/*softdrop*hlv*z05*b1*")
-    truth_file = glob(f"{config.eval.path_to_model}/eval_files/*truth*.h5")[0]
+    softdrop=glob(f"{config.softdrop_path}/softdrop/zcut_0_05_beta_2/*{name}*{file_type}")
+
+    truth_file = glob(f"{config.eval.path_to_model}/eval_files/jet_subs/*truth*.h5")[0]
+    truth = pd.read_hdf(truth_file)
     # else:
     #     truth_file = glob(f"{config.eval.path_to_model}/eval_files/*truth*{file_type}")[0]
     #     softdrop=glob(f"{config.softdrop_path}/data/*{name}*softdrop*HLV*")
 
-    file_lists = glob(f"{config.eval.path_to_model}/eval_files/*{config.csv_sample_to_load}*.h5")
+    file_lists = glob(f"{config.eval.path_to_model}/eval_files/jet_subs/*{config.csv_sample_to_load}{name}*.h5")
 
-    truth = pd.read_hdf(truth_file)
     generated = pd.read_hdf([i for i in file_lists if ("truth" not in i) & ("ctxt" not in i)][0])
     truth["eventNumber"] = truth.index 
     
@@ -207,32 +218,30 @@ if __name__ == "__main__":
             black_line_bool=True,
             sym_percentile=99.99
             )
-        # sys.exit()
+        sys.exit()
 
-        truth_file = glob(f"{config.eval.path_to_model}/eval_files/*truth*{config.csv_sample_to_load}.h5")[0]
+        # truth_file = glob(f"{config.eval.path_to_model}/eval_files/*truth*{config.csv_sample_to_load}.h5")[0]
         truth = pd.read_hdf(truth_file)
 
         # performance as a function of mu
-        vipr_mu = {"median": [], "width": []}
-        obs_mu = {"median": [], "width": []}
+        vipr_mu = {i: {"median": [], "width": []} for i in config.eval.path_lst}
+        obs_mu = {"median": [], "width": []} 
         sd_mu = {}
-        mu_lst = [50,60,70,80,90,100,150, 200]
+        mu_lst = [50,60,70,80,90,100,150,200,250,300]
+        save_path = "/home/users/a/algren/work/diffusion/figures/"
 
-        for mu in mu_lst:
+
+        for mu in tqdm(mu_lst):
             name = get_pileup_name({"mu": mu, "std": 0})
 
-            file_lists = glob(f"{config.eval.path_to_model}/eval_files/*{config.csv_sample_to_load}{name}.h5")
+            file_lists = glob(f"{config.eval.path_to_model}/eval_files/jet_subs/*{config.csv_sample_to_load}{name}.h5")
 
-            generated = pd.read_hdf([i for i in file_lists if ("truth" not in i) & ("ctxt" not in i)][0])
             obs_jets = pd.read_hdf([i for i in file_lists if "ctxt" in i][0])
 
-            diff_obs = np.nan_to_num(
-                (obs_jets[jet_vars]-truth[jet_vars]),
+            diff_obs = np.nan_to_num(relative_error(obs_jets[jet_vars],
+                                                    truth[jet_vars]),
                 -999, posinf=-999, neginf=-999)
 
-            diff_gen = np.nan_to_num(
-                (generated[jet_vars]-truth[jet_vars]),
-                -999, posinf=-999, neginf=-999)
 
             
             # obs 
@@ -240,28 +249,38 @@ if __name__ == "__main__":
             obs_mu["median"].append(np.median(diff_obs,0)[:, None])
 
             # vipr
-            vipr_mu["width"].append(get_width(diff_gen)[:, None])
-            vipr_mu["median"].append(np.median(diff_gen,0)[:, None])
+            for j, i in config.eval.path_lst.items():
+                file_lists = glob(f"{i}/eval_files/jet_subs/*{config.csv_sample_to_load}{name}.h5")
+            
+                generated = pd.read_hdf([i for i in file_lists if ("truth" not in i) & ("ctxt" not in i)][0])
+                diff_gen = np.nan_to_num(relative_error(generated[jet_vars], 
+                                                        truth[jet_vars]),
+                                        -999, posinf=-999, neginf=-999)
+                vipr_mu[j]["width"].append(get_width(diff_gen)[:, None])
+                vipr_mu[j]["median"].append(np.median(diff_gen,0)[:, None])
             
             # SD - handling multiple sd files
-            softdrop=glob(f"{config.softdrop_path}/data/*{name}*softdrop*HLV*")
-            for sp_path in softdrop:
+            softdrop=glob(f"{config.softdrop_path}/softdrop/*")
+            for sp_folder in softdrop:
 
-                softdrop_jet = pd.read_hdf(sp_path).iloc[:len(obs_jets)]
+                sp_hp = sp_folder.split("/")[-1]
+                if sp_hp not in sd_mu:
+                    sd_mu[sp_hp] = {"median": [], "width": []}
 
-                diff_SD = np.nan_to_num(
-                    (softdrop_jet[jet_vars]-truth[jet_vars]),
-                    -999, posinf=-999, neginf=-999)
+                for sp_path in glob(f"{sp_folder}/*{name}*HLV*"):
+                    softdrop_jet = pd.read_hdf(sp_path).iloc[:len(obs_jets)]
 
-                sd_name = sp_path.split("softdrop")[-1].split("HLV")[0]
-                if sd_name not in sd_mu:
-                    sd_mu[sd_name] = {"median": [], "width": []}
+                    diff_SD = np.nan_to_num(relative_error(softdrop_jet[jet_vars],
+                                                           truth[jet_vars]),
+                                            -999, posinf=-999, neginf=-999)
 
-                sd_mu[sd_name]["width"].append(get_width(diff_SD)[:, None])
-                sd_mu[sd_name]["median"].append(np.median(diff_SD,0)[:, None])
-        
+
+                    sd_mu[sp_hp]["width"].append(get_width(diff_SD)[:, None])
+                    sd_mu[sp_hp]["median"].append(np.median(diff_SD,0)[:, None])
+
         for i in ["width", "median"]:
-            vipr_mu[i] = np.concatenate(vipr_mu[i], 1)
+            for j in vipr_mu:
+                vipr_mu[j][i] = np.concatenate(vipr_mu[j][i], 1)
             obs_mu[i] = np.concatenate(obs_mu[i], 1)
             for j in sd_mu:
                 sd_mu[j][i] = np.concatenate(sd_mu[j][i], 1)
@@ -277,11 +296,14 @@ if __name__ == "__main__":
             # ax.plot(mu_lst,np.zeros_like(mu_lst),label = "Zero line",
             #          color="black", ls="dotted", lw=3)
 
-            ax_m.plot(mu_lst, obs_mu["median"][i, :],label="Obs. jet", color="red")
-            ax.plot(mu_lst, obs_mu["width"][i, :],label="Obs. jet", color="red")
-
-            ax_m.plot(mu_lst, vipr_mu["median"][i, :],label="Vipr jet", color="blue")
-            ax.plot(mu_lst, vipr_mu["width"][i, :],label="Vipr jet", color="blue")
+            ax_m.plot(mu_lst, obs_mu["median"][i, :],label="Obs.", color="red")
+            ax.plot(mu_lst, obs_mu["width"][i, :],label="Obs.", color="red")
+            for j, line in zip(vipr_mu, ["solid", "dashed"]):
+                ax_m.plot(mu_lst, vipr_mu[j]["median"][i, :],label=f"Vipr: {j}",
+                          color="blue", ls=line)
+                ax.plot(mu_lst, vipr_mu[j]["width"][i, :],label=f"Vipr: {j}",
+                        color="blue", ls=line)
+            
 
             # plot n sd parameters
             for nr, j in enumerate(sd_mu):
@@ -292,16 +314,16 @@ if __name__ == "__main__":
                 legend_name = r"$z_{\mathrm{cut}} = $"+zcut+r" $\beta$= "+beta
                 
                 ax_m.plot(mu_lst, sd_mu[j]["median"][i, :],label=f"SD: {legend_name}", color="green",
-                          ls=linestyle_str[nr][0])
+                          ls=linestyle_tuple[nr][1])
                 ax.plot(mu_lst, sd_mu[j]["width"][i, :],label=f"SD: {legend_name}", color="green",
-                        ls=linestyle_str[nr][0])
+                        ls=linestyle_tuple[nr][1])
 
             for i,j in zip([ax, ax_m], ["IQR", "Median"]):
                 i.legend(frameon=False, loc="best")
-                i.set_ylabel(f"{j} of {name}")
+                i.set_ylabel(f"{j} of RE({name})")
                 i.set_xlabel(r"$<\mu>$")
 
             ax.set_yscale("log")
             if config.save_figures:
-                misc.save_fig(fig_m, f"{save_path}/pileup_func/{name}_median.pdf")    
-                misc.save_fig(fig, f"{save_path}/pileup_func/{name}_IQR.pdf")        
+                misc.save_fig(fig_m, f"{save_path}/pileup_func/{name}_median.pdf")
+                misc.save_fig(fig, f"{save_path}/pileup_func/{name}_IQR.pdf")

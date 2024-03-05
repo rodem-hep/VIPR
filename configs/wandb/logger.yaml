@@ -1,0 +1,11 @@
+wandb:
+  _target_: pytorch_lightning.loggers.wandb.WandbLogger
+  entity: malteal
+  offline: False
+  id: null
+  log_model: False
+  project: ${project}
+  name: ${name}
+  save_dir: ${save_path}
+  # resume: ${full_resume}
+  # tags: ${tags}

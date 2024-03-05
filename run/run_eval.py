@@ -50,7 +50,7 @@ def main(config):
 
         # Write dictionary to json file
         np.save(f'/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/top_jets/top_jet_size_{size}{date_str}.npy', eval_truth)
-    elif False: # generate substructure
+    elif True: # generate substructure
         size = config.eval.size
 
         ### generate sample ###
@@ -62,11 +62,11 @@ def main(config):
             size = "99990_2000" # TODO fix this
 
         # full name
-        full_name = f"{config.csv_sample_to_load}{name}_size_{size}"
+        full_name = f"{config.csv_sample_to_load}{name}" #_size_{size}"
 
         # truth_jets = gen_data[f"truth_jets_{config.csv_sample_to_load}"]
-        gen_cnts = gen_data[f"gen_cnts_{full_name}"]
-        gen_jets = gen_data[f"gen_jets_{full_name}"]
+        gen_cnts = gen_data[[i for i in gen_data if f"cnts_{full_name}" in i][0]]
+        gen_jets = gen_data[[i for i in gen_data if f"jets_{full_name}" in i][0]]
 
         # # create pc
         gen_cnts, mask = matrix_to_point_cloud(gen_cnts[["eta", "phi", "pt"]].values,
@@ -78,7 +78,9 @@ def main(config):
 
         # generated
         print("Generated predicted substructure")
-        out_name = f"{config.eval.path_to_model}/eval_files/jet_substructure_{full_name}.h5"
+        os.makedirs(f"{config.eval.path_to_model}/eval_files/jet_subs/", exist_ok=True)
+
+        out_name = f"{config.eval.path_to_model}/eval_files/jet_subs/jet_substructure_{full_name}.h5"
         
         if not os.path.isfile(out_name):
             if "posterior" in config.csv_sample_to_load:
@@ -91,25 +93,25 @@ def main(config):
                 import sys
                 sys.exit()
 
-        truth_name = f"{config.eval.path_to_model}/eval_files/jet_substructure_truth_{full_name}.h5"
+        truth_name = f"{config.eval.path_to_model}/eval_files/jet_subs/jet_substructure_truth_{full_name}.h5"
 
-        if not os.path.isfile(truth_name) and not "posterior" in config.csv_sample_to_load:
+        if not os.path.isfile(truth_name) and not "posterior" in config.csv_sample_to_load and False:
             # # substruct for true Top
             print("True substructure")
             sjets.dump_hlvs(eval_fw.data.cnts_vars[:None],
                             eval_fw.data.mask_cnts[:None],
-                            out_path=f"{config.eval.path_to_model}/eval_files/jet_substructure_truth_{full_name}.h5",
+                            out_path=f"{config.eval.path_to_model}/eval_files/jet_subs/jet_substructure_truth_{full_name}.h5",
                             # addi_col={"eventNumber":truth_jets["eventNumber"].values[:len(gen_jets)]}
                             )
         
-        obs_jet_file_name = f"{config.eval.path_to_model}/eval_files/jet_substructure_ctxt_{full_name}.h5"
+        obs_jet_file_name = f"{config.eval.path_to_model}/eval_files/jet_subs/jet_substructure_ctxt_{full_name}.h5"
         
         if ("single" in config.csv_sample_to_load
-            and not os.path.isfile(obs_jet_file_name)): # substruct for obs. jet
+            and not os.path.isfile(obs_jet_file_name) and False): # substruct for obs. jet
             print("Generated obs. jet substructure")
 
             # get ctxt 
-            ctxt_path = glob(f"/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/data/obs_jet{full_name.replace('single', '')}*.npy")
+            ctxt_path = glob(f"/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/obs_jets/*{full_name.replace('single', '')}*.npy")
 
             eval_ctxt= np.load([i for i in ctxt_path if "soft" not in i][0], allow_pickle=True).item()
 

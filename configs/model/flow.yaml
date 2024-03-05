@@ -1,19 +1,46 @@
-_target_: run.TransFlow
+_target_: run.run_flow.TransFlow
 
 device: ${device}
 
+cls_dim_in: 3
+
+dense_conf:
+  act_str: gelu
+  n_layers: 0
+  norm: True
+  nfactor: 2
+
 data_dims:
-  cnts: 3
-  scalars: 4
+  cnts: ${model.cls_dim_in}
+  scalars: 5
 
 flow_conf:
   xz_dim: 1
-  ctxt_dim: 128
+  ctxt_dim: 512
   nstacks: 3
   param_func: made
   invrt_func: "rqs"
-  base_dist: normal
+  base_dist: uniform
   device: ${device}
+  rqs_kwargs: 
+    tails: linear
+    num_bins: 12
+    num_blocks: 2
+    tail_bound: 4
+
+train_conf:
+  lr: 1e-4
+  sch_config: 
+    _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+    _partial_: true
+    eta_min: 1e-7
+    T_max: null
+  epochs: ${trainer.max_epochs}
+
+
+defaults:
+  - _self_
+  - architectures@embed_conf: class_embedding.yaml
   
 
 

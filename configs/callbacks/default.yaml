@@ -1,0 +1,23 @@
+
+# # Early stopping callback
+# early_stopping:
+#   _target_: pytorch_lightning.callbacks.EarlyStopping
+#   monitor: "valid/loss"
+#   min_delta: 0.01
+#   patience: 10
+#   check_finite: True
+
+checkpoint:
+  _target_: pytorch_lightning.callbacks.ModelCheckpoint
+  monitor: "valid/loss"
+  dirpath: ${save_path}/checkpoints/
+  filename: best_{epoch:03d}_{val_loss:.4f}_{other_metric:.4f}
+  save_top_k: 1
+  mode: "min"
+  save_last: True
+  save_weights_only: False
+  verbose: True
+
+lr_monitor:
+  _target_: pytorch_lightning.callbacks.LearningRateMonitor
+  logging_interval: step
