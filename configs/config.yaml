@@ -19,8 +19,11 @@ defaults:
   - hydra: default.yaml
   - experiment: default.yaml
 
-path: /home/users/a/algren/scratch/trained_networks/diffusion/${wandb.mode}/
+path: /home/users/a/algren/scratch/trained_networks/diffgae/${wandb.mode}/
 
-save_path: ${path}/${wandb.name}
+save_path: ${path}/${name}
+
+project: p_N_flow
+name: ${data.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
 
 device: cuda

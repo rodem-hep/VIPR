@@ -658,7 +658,7 @@ class MultiJetFiles(MultiStreamDataLoader):
                                      int(np.ceil(len(data_list)/self.num_workers))))
         
         if self.num_workers < len(split_data_lst):
-            raise ValueError("max_workers higher than number of fils")
+            raise ValueError("max_workers higher than number of files")
         
         datasets = [MultiFileDataset(data_lst=path,
                                      batch_size=self.loader_config["batch_size"],
@@ -806,7 +806,7 @@ if __name__ == "__main__":
         legend_kwargs={"loc": "upper right", 'prop': {'size': 16}}
         for i,name, xlabel in zip(range(multi_data["scalars"].shape[1]),
                           physics.jet_scalars_cols,
-                          [r"$\eta", r"$\phi$",
+                          [r"$\eta$", r"$\phi$",
                         #   [r"$\eta_{truth}-\eta_{Obs.}$", r"$\phi_{truth}-\phi_{Obs.}$",
                            r"$p_{\mathrm{T}}[\mathrm{GeV}]$", "Mass [GeV]",
                            r"$\mu$", "Number of cnsts."]):
@@ -849,7 +849,7 @@ if __name__ == "__main__":
             ax.set_xlabel(xlabel)
             if "eta" in name:
                 ax.set_ylim(0, 0.04)
-            plt.text(0.85,0.80, r"$\langle\mu\rangle$~$\mathcal{N}(200, 50)$",
+            plt.text(0.85,0.80, r"$\mu$~$\mathcal{N}(200, 50)$",
                      transform=ax.transAxes, **text_kwargs)
             if save_fig:
                 misc.save_fig(fig, f"/home/users/a/algren/work/diffusion/plots/jet_var_{name}.pdf")
@@ -878,7 +878,7 @@ if __name__ == "__main__":
                            legend_kwargs=legend_kwargs,
                            ax=ax)
             ax.set_xlabel(xlabel)
-            plt.text(0.85,0.80, r"$\langle\mu\rangle$~$\mathcal{N}(200, 50)$",
+            plt.text(0.85,0.80, r"$\mu$~$\mathcal{N}(200, 50)$",
                      transform=ax.transAxes, **text_kwargs)
             if "pt" in name:
                 ax.set_xticks([1, 5, 10, 50, 100, 200])

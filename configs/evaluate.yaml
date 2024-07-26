@@ -1,21 +1,26 @@
 # @package _global_
 glob_path: /srv/beegfs/scratch/users/a/algren/trained_networks/diffusion/
+obs_jets_path: /srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/obs_jets/
 
-jet_vars: ['eta', 'phi', 'pt', 'mass'] #, "px", "py", "pz"]
+jet_vars: ['eta', 'phi', 'pt', 'mass']
+jet_sub_vars : ["tau_21", "tau_32", "d12", "d23", "d2", "mass", "pt"]
+
 
 # glob settings
-n_post_to_gen: 1 # >1 generate posterior
+generate_substructure: False
+n_post_to_gen: 512 # >1 generate posterior
 combine_ctxt_size: 1
-csv_sample_to_load: posterior_${eval.size} #single 
-plot_images: False
+csv_sample_to_load: single #posterior_${eval.size} #single 
+plot_images: True
 save_figures: False
 softdrop_path: /srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/
 
 # how to run eval fw
 eval:
   _target_: run.plot_eval.EvaluatePhysics
-  # path_to_model: ${glob_path}/online/jet_2024_01_02_17_20_06_486693 # most results N(50, 10)
-  # path_to_model: ${glob_path}/online/jet_2024_02_07_19_00_29_358221 # N(200, 10)
+  flow_path: jet_flow_2024_03_11_13_29_10_850955 # N(200, 10) correct normalization
+  run_flow: True
+
   path_to_model: ${glob_path}/online/jet_2024_02_12_15_29_33_272016 # N(200, 10) correct normalization
   # path_to_model: ${glob_path}/online/jet_2024_02_17_14_17_07_224394 # N(60, 10) correct normalization
 
@@ -23,18 +28,18 @@ eval:
     N(200, 50): ${glob_path}/online/jet_2024_02_12_15_29_33_272016 # N(200, 10) correct normalization
     N(60, 10):  ${glob_path}/online/jet_2024_02_17_14_17_07_224394 # N(60, 10) correct normalization
 
-  size: 2_000 # 100_000 / 2000
-  device: cuda
+  size: 10_000 # 100_000 / 2000
+  device: cpu
   format: ".pdf"
 
   data_cfg: 
     pileup_dist_args:
       mu: 200
-      std: 0
+      std: 0 # 50 or 0
 
 
   loader_config:
-    batch_size: 256
+    batch_size: 512
     num_workers: 8
   
   eval_cfg:
@@ -44,25 +49,29 @@ eval:
 # plot settings
 hist_kwargs:
   style:
-    bins: 40
-  percentile_lst: [0.1, 99.9]
+    bins: 35
+  percentile_lst: [0.1, 99]
   dist_styles:
     - label: Top
       color: black
 
-    - label: Vipr
-      color: blue
-
-    - label: SD
+    - label: SoftDrop
       color: green
 
     - label: Obs.
       color: red
 
+    # - label: Vipr
+    #   color: blue
+
+    - label: 'VIPR'
+      color: blue
+      # ls: dashed
 
 ratio_kwargs:
   styles: 
     - color: black
-    - color: blue
     - color: green
     - color: red
+    # - color: blue
+    - color: blue

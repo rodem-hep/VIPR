@@ -1,7 +1,7 @@
 # deep learning
 torchvision
 torchmetrics
-pytorch-lightning
+lightning
 nflows
 
 # data science / plotting
@@ -37,3 +37,7 @@ jupyterlab
 python-gitlab
 pyrootutils
 pyjet
+
+# workflow
+snakemake
+

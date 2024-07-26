@@ -4,16 +4,25 @@ import pyrootutils
 root = pyrootutils.setup_root(search_from=__file__, pythonpath=True)
 
 import hydra
-import pytorch_lightning as L
 import numpy as np
 import torch as T
-from omegaconf import OmegaConf
 
 from src.eval_utils import EvaluateFramework, get_percentile
+
 from tools.flows import Flow, stacked_norm_flow
 from tools.modules import IterativeNormLayer, MinMaxLayer
-from tools.omegaconf_utils import instantiate_collection, check_config
-from tools.visualization import general_plotting as plot
+from tools.omegaconf_utils import instantiate_collection
+from tools import misc
+
+def load_flow_from_path(path:str, dev:str="cuda"):
+    "load flow from path and return it"
+    flow_cfg = misc.load_yaml(f"{path}/.hydra/config.yaml")
+    # flow = hydra.utils.instantiate(flow_cfg.model, device=dev)
+    # state = T.load(f"{path}/checkpoints/last.ckpt", map_location=dev)
+    flow = hydra.utils.get_class(flow_cfg.model._target_)
+    flow.device=dev
+    flow = flow.load_from_checkpoint(f"{path}/checkpoints/last.ckpt", map_location=dev, device=dev)
+    return flow
 
 class TransFlow(Flow):
     def __init__(self, data_dims:dict, flow_conf:dict, embed_conf:dict,
@@ -28,6 +37,7 @@ class TransFlow(Flow):
         self.train_conf = train_conf
         self.embed_conf = embed_conf
         self.dense_conf = dense_conf
+        self.target_norm = kwargs.get("target_norm", "minmax")
         self.get_network()
         self.to(device)
         
@@ -42,12 +52,18 @@ class TransFlow(Flow):
         # plotting eval framework
         self.eval_f = EvaluateFramework()
         
+        
     def get_network(self):
         # Initialise the individual normalisation layers
-        self.cnsts_normaliser = IterativeNormLayer(self.data_dims["cnts"], max_iters=20_000)
-        self.scalars_normaliser = IterativeNormLayer(self.data_dims["scalars"], max_iters=20_000)
-        self.minmax = MinMaxLayer(np.array([[0]]), np.array([[200]]),
-                                  feature_range=[-4,4])
+        self.cnsts_normaliser = IterativeNormLayer((1,self.data_dims["cnts"]), max_iters=50_000)
+        self.scalars_normaliser = IterativeNormLayer((1, self.data_dims["scalars"]), max_iters=50_000)
+        if self.target_norm=="minmax":
+            self.minmax = MinMaxLayer(np.array([[0]]), np.array([[200]]),
+                                    feature_range=[-4,4])
+        elif self.target_norm=="standard":
+            self.minmax = IterativeNormLayer((1, 1), max_iters=50_000)
+        else:
+            raise ValueError(f"target_norm {self.target_norm} not recognised")
 
         self.flow = stacked_norm_flow(**self.flow_conf).to(self.device)
         self.embed = self.embed_conf()
@@ -56,7 +72,8 @@ class TransFlow(Flow):
 
         # normalise ctxt
         if "cnts" in ctxt:
-            ctxt["cnts"] = self.cnsts_normaliser(ctxt["cnts"].to(self.device))
+            ctxt["cnts"] = self.cnsts_normaliser(ctxt["cnts"].to(self.device),
+                                                 mask=ctxt["mask"].to(self.device))
 
         if "scalars" in ctxt:
             ctxt["scalars"] = self.scalars_normaliser(ctxt["scalars"].to(self.device))
@@ -70,6 +87,7 @@ class TransFlow(Flow):
     def _shared_step(self, batch:dict, batch_idx:int):
 
         # narrow gauss to make discrete values continuous
+        # smear by N(0,0.5)
         randn = T.rand_like(batch["images"]).to(self.device)*0.5
 
         # minmax with narrow noise
@@ -97,9 +115,9 @@ class TransFlow(Flow):
             samples = samples.view(-1,1)
         
         # inverse transform
-        N = self.minmax.reverse(samples).int()
+        N = self.minmax.reverse(samples)
 
-        return N
+        return T.round(N)
 
     def validation_step(self, batch:dict, batch_idx:int):
         "run validation batches and log results"
@@ -138,13 +156,15 @@ class TransFlow(Flow):
         log = self.eval_f.plot_marginals(all_preds, all_truth, col_name=["N"],
                                          log={}, hist_kwargs={
                                              "dist_styles":[{"label":"Predict", "color":"b"},
-                                                            {"label":"Truth", "color":"r"}]
+                                                            {"label":"Truth", "color":"r"}],
+                                             "percentile_lst": [1, 99]
                                          })
 
         log = self.eval_f.plot_marginals(error/all_truth, col_name=["RE"],
                                          log=log, ratio_bool=False,
                                          hist_kwargs={
-                                             "dist_styles":[{"label":"(pred-true)/true", "color":"b"},]
+                                             "dist_styles":[{"label":"(pred-true)/true", "color":"b"}],
+                                             "percentile_lst": [1, 99]
                                          })
         
         # truth quantile
@@ -155,7 +175,8 @@ class TransFlow(Flow):
                                          col_name=["Truth quantile"],
                                          log=log,hist_kwargs={
                                              "dist_styles":[{"label":"Truth quantile", "color":"b"},
-                                                            {"label":"Uniform", "color":"r"}]
+                                                            {"label":"Uniform", "color":"r"}],
+                                             "percentile_lst": [0, 100],
                                          })
         for i,j in log.items():
             self.logger.log_image(key=i, images=[j])

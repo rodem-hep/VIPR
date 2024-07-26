@@ -76,7 +76,7 @@ class EvaluateFramework:
             # black zero line
             if kwargs.get("black_line_bool", False):
                 ax_1.axvline(0, 0, 1, color='black', ls="dashed")
-                plt.legend(loc='best', frameon=False)
+                plt.legend(**kwargs.get("legend_kwargs", {}))
 
             if (len(args)>1) and ratio_bool:
                 # plot ratio between distribution
@@ -88,7 +88,6 @@ class EvaluateFramework:
                 ax_2.set_xlabel(kwargs.get("xlabels", col_name)[nr])
             else:
                 ax_1.set_xlabel(kwargs.get("xlabels", col_name)[nr])
-                
                 
             if isinstance(log, dict):
                 log[f"{name}_hist"] =  wandb.Image(fig2img(fig))

@@ -27,8 +27,8 @@ data:
       # if the pileup path in defined - it will use pileup path
       pileup_path: ["/srv/beegfs/scratch/users/a/algren/diffusion/pileup/pileup.csv", ]
       pileup_dist_args:
-        mu: 200
-        std: 50
+        mu: 175
+        std: 75
 
   valid:
     _target_: src.physics.JetPhysics

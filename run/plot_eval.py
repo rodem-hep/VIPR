@@ -5,24 +5,28 @@ root = pyrootutils.setup_root(search_from=__file__, pythonpath=True)
 from glob import glob
 import hydra
 from tqdm import tqdm
+from typing import List
 import torch as T
 import numpy as np
 import os
 import h5py
 import sys
+import logging
 import matplotlib.pyplot as plt
-from tools.visualization import general_plotting as plot
 import pandas as pd
 from omegaconf import OmegaConf
-from datetime import datetime
+from run.run_flow import load_flow_from_path
 
-from tools import misc
-import src.physics as phy 
-from tools.datamodule.pipeline import pc_2_image
-from tools.datamodule.prepare_data import fill_data_in_pc, matrix_to_point_cloud
+# import src.physics as phy 
 import src.eval_utils as eutils
 import src.diffusion_schemes as ds
+from run.eval_flow import DictDataset
 
+from tools import misc, hydra_utils
+
+from tools.visualization import general_plotting as plot
+from tools.datamodule.prepare_data import matrix_to_point_cloud
+import tools.physics as phy
 
 hist_kwargs={"style":{"bins": 50},
              "dist_styles":[{"label": r"jet$_{Top}}$"},
@@ -46,10 +50,23 @@ class EvaluatePhysics(eutils.EvaluateFramework):
         self.format=kwargs.get("format", ".png")
         self.config = misc.load_yaml(path_to_model+"/.hydra/config.yaml")
         self.diffusion_cfg = misc.load_yaml(path_to_model+"/diffusion_cfg.yaml")
+        self.flow_path = kwargs.get("flow_path")
+        self.run_flow = kwargs.get("run_flow", False)
         
-        # create eval folder
+        # 
         self.eval_folder = f"{path_to_model}/eval_files/"
+        
+        # account for flow model
+        if  self.flow_path  is not None:
+            # create new eval folder for flow tests
+            self.eval_folder += f"/flow_N/{self.flow_path}"
+            self.flow_path = "/".join(path_to_model.split("/")[:-2])+f"flow/{self.flow_path}/"
+            # load flow model
+            self.flow = load_flow_from_path( self.flow_path, device)
+
+        # create eval folder
         os.makedirs(self.eval_folder, exist_ok=True)
+        
         self.eval_files = glob(f"{self.eval_folder}/*.csv")+glob(f"{self.eval_folder}/*.h5")
         self.eval_files_available = len(self.eval_files)>0
         
@@ -74,16 +91,17 @@ class EvaluatePhysics(eutils.EvaluateFramework):
         self.data = hydra.utils.instantiate(data_cfg)
 
 
-    def get_eval_files(self, should_contain:str="", specific_file:str=".csv"):
+    def get_eval_files(self, should_contain:str="", specific_file:str=".csv",
+                       eval_files:List[str]=None):
         eval_data = {}
-        eval_files = self.eval_files
+        eval_files = self.eval_files if eval_files is None else eval_files
         if specific_file is not None:
             eval_files = [i for i in eval_files if specific_file in i]
 
         # eval_files = [i for i in eval_files if "jet_substructure" not in i]
             
         for i in eval_files:
-            name = i.split(".csv")[0].split("/")[-1]
+            name = i.split(".")[0].split("/")[-1]
 
             if should_contain not in name:
                 continue
@@ -105,7 +123,9 @@ class EvaluatePhysics(eutils.EvaluateFramework):
                 if self.verbose:
                     print(name)
                     print(len(data))
-                eval_data[name]  = pd.DataFrame(data, columns=columns).astype(float)
+                if np.any(data==""):
+                    data[np.any(data=="",1)] = np.nan
+                eval_data[name]  = pd.DataFrame(data, columns=columns).astype(np.float32)
             else:
                 with h5py.File(i, 'r+') as hf:
                     eval_data[name] = hf["gen_cnts"][:]
@@ -176,6 +196,17 @@ class EvaluatePhysics(eutils.EvaluateFramework):
             eval_ctxt[i] = np.repeat(j, repeats=repeats, axis=0)
 
         n_cnts = eval_ctxt.pop("true_n_cnts")
+        if self.run_flow:
+            # change n_cnts to the flow predicted one
+            sample = {i: T.tensor(j, device=self.flow.device) for i,j in eval_ctxt.items()}
+            sample["scalars"] = sample["scalars"][:, :-1]
+            dataloader = T.utils.data.DataLoader(DictDataset(sample), 
+                                                 batch_size=64, shuffle=False)
+            n_cnts = np.int64(np.ravel(np.concatenate([
+                self.flow.sample(i).cpu().detach().numpy() for i in dataloader
+                ])))
+            eval_ctxt["scalars"][:,-1] = n_cnts
+            
 
         self.diffusion.init_noise["size"]=len(n_cnts)
         loader_config = self.loader_config.copy()
@@ -209,14 +240,23 @@ class EvaluatePhysics(eutils.EvaluateFramework):
         # run n number of ctxt
 
         if n_post_to_gen>1:
-            # saving_name += f"_{self.size}"
-            jet_size= self.size
-            self.data.jet_vars.iloc[:jet_size].to_csv(f"{self.eval_folder}/truth_jets_{saving_name}.csv")
+            #setup paths and folder
+            obs_jet_size= self.size #len(eval_ctxt["true_n_cnts"])
+            post_save_path = f"{self.eval_folder}/post/"
+            os.makedirs(f"{post_save_path}/", exist_ok=True)
+
+            if self.run_flow: # create flow_N folder for flow evals
+                post_save_path += "/flow_N/"
+                os.makedirs(f"{post_save_path}/", exist_ok=True)
+                
+            
+            # save truth
+            self.data.jet_vars.iloc[:obs_jet_size].to_csv(f"{post_save_path}/truth_jets_{saving_name}.csv")
             
             # if combine_ctxt_size==1:
             #     raise ValueError("combine_ctxt_size should be larger than 1")
             
-            steps=np.arange(self.size+combine_ctxt_size, step=combine_ctxt_size)
+            steps=np.arange(obs_jet_size+combine_ctxt_size, step=combine_ctxt_size)
             for nr, (lower, high) in tqdm(enumerate(zip(steps[:-1], steps[1:])),
                                           total=len(steps)):
                 # get ctxt
@@ -246,15 +286,15 @@ class EvaluatePhysics(eutils.EvaluateFramework):
                 all_gen_jets.append(gen_jet_vars)
                 
                 #save samples
-                pd.concat(all_gen_jets).to_csv(f"{self.eval_folder}/gen_jets_{saving_name}.csv")
+                pd.concat(all_gen_jets).to_csv(f"{post_save_path}/gen_jets_{saving_name}.csv")
                 
                 if "posterior" in saving_name:
-                    with h5py.File(f"{self.eval_folder}/gen_cnts_{saving_name}.h5", 'w') as hf:
+                    with h5py.File(f"{post_save_path}/gen_cnts_{saving_name}.h5", 'w') as hf:
                         hf.create_dataset("gen_cnts",  data=np.concatenate(all_gen_cnts, 0))
                 else:
                     pd.DataFrame(np.concatenate(all_gen_cnts, 0),
                                 columns=["eta", "phi", "pt", "eventNumber", "n_post"]
-                                ).to_csv(f"{self.eval_folder}/gen_cnts_{saving_name}.csv")
+                                ).to_csv(f"{post_save_path}/gen_cnts_{saving_name}.csv")
         else:
             if "std_0" in saving_name: # run all values for std_0
                 self.diffusion.init_noise["size"] = len(eval_ctxt["scalars"])
@@ -281,14 +321,15 @@ class EvaluatePhysics(eutils.EvaluateFramework):
 
 if __name__ == "__main__":
     # %matplotlib widget
-    config = misc.load_yaml(str(root/"configs/evaluate.yaml"))
+    config = hydra_utils.hydra_init(str(root/"configs/evaluate.yaml"))
+    print(config)
+    
     eval_fw = hydra.utils.instantiate(config.eval)
     save_figs = config.save_figures
     save_path = f"{config.eval.path_to_model}/figures/"
 
     name = get_pileup_name(eval_fw.data.pileup_dist_args)
-    # name = ("" if "posterior" in config.csv_sample_to_load
-    #         else get_pileup_name(eval_fw.data.pileup_dist_args))
+    
 
     gen_data = eval_fw.get_eval_files(should_contain="jets_"+config.csv_sample_to_load.split("_")[0])
 
@@ -304,6 +345,7 @@ if __name__ == "__main__":
     truth_jets = gen_data[f"truth_jets_{config.csv_sample_to_load}{name}_size_{size}"]
     mask_mass = truth_jets["mass"]!=0 # some masses are zero?
     truth_jets=truth_jets.reset_index(drop=True)
+    logging.info(f"Plotting: gen_jets_{config.csv_sample_to_load}{name}_size_{size}")
     gen_jets = gen_data[f"gen_jets_{config.csv_sample_to_load}{name}_size_{size}"].reset_index(drop=True)
     
     # get ctxt 
@@ -319,40 +361,47 @@ if __name__ == "__main__":
     hist_kwargs = OmegaConf.to_object(config.hist_kwargs)
     ratio_kwargs = OmegaConf.to_object(config.ratio_kwargs)
 
-    col_to_plot = ["eta", "phi", "pt", "mass"]
+    col_to_plot = config.jet_vars
     jet_labels = [r"$\eta$", r"$\phi$", "Mass [GeV]", r"p$_\mathrm{T}$ [GeV]"]
 
     softdrop=glob(f"{config.softdrop_path}/softdrop/zcut_0_05_beta_2/*{name}*")
 
 
-    softdrop_cnts = np.load(softdrop[1], allow_pickle=True)[..., [1,2,0]]
-    softdrop_jet = pd.read_hdf(softdrop[0])
+    softdrop_cnts = np.load([i for i in softdrop if "npy" in i][0], allow_pickle=True)[..., [1,2,0]]
+    
+    softdrop_jet = pd.read_hdf([i for i in softdrop if "HLV" in i][0])
 
     ### plot figures ##
     if "single" in config.csv_sample_to_load: # single generated value
         save_path=save_path+"single/"
+        truth_jets = np.nan_to_num(truth_jets[col_to_plot].values, -999)
+        gen_jets = np.nan_to_num(gen_jets[col_to_plot].values, -999)
+        softdrop_jet = np.nan_to_num(softdrop_jet[col_to_plot].iloc[:len(truth_jets)].values, -999)
+        obs_jets = np.nan_to_num(obs_jets[col_to_plot].iloc[:len(truth_jets)].values, -999)
+        
         
         # plot 1d marginals of cnts
-        eval_fw.plot_marginals(truth_jets[col_to_plot].values,
-                                gen_jets[col_to_plot].values,
-                                softdrop_jet[col_to_plot].iloc[:len(truth_jets)].values,
-                                obs_jets[col_to_plot].iloc[:len(truth_jets)].values,
+        eval_fw.plot_marginals(truth_jets,
+                                softdrop_jet,
+                                obs_jets,
+                                gen_jets,
                                 col_name=col_to_plot,
                                 hist_kwargs=hist_kwargs,
                                 ratio_kwargs=ratio_kwargs,
                                 save_path=f"{save_path}/gen_jets_" if save_figs else None,
                                 xlabels=jet_labels
                                 )
+        # sys.exit()
 
         hist_kwargs["dist_styles"].pop(0)
 
-        hist_kwargs["dist_styles"][0]["label"] =  "Vipr"
-        hist_kwargs["dist_styles"][1]["label"] =  "SoftDrop"
-        hist_kwargs["dist_styles"][2]["label"] = "Obs."
+        hist_kwargs["dist_styles"][0]["label"] =  "SoftDrop"
+        hist_kwargs["dist_styles"][1]["label"] = "Obs."
+        hist_kwargs["dist_styles"][2]["label"] =  "Vipr"
 
-        diff_obs = ((obs_jets-truth_jets)/truth_jets)[col_to_plot].iloc[:len(truth_jets)].values
-        diff_gen = ((gen_jets-truth_jets)/truth_jets)[col_to_plot].values
-        diff_SD = ((softdrop_jet[:len(truth_jets)]-truth_jets)/truth_jets)[col_to_plot].values
+        diff_obs = ((obs_jets-truth_jets)/truth_jets)[:len(truth_jets)]
+        diff_gen = ((gen_jets-truth_jets)/truth_jets)
+        diff_SD = ((softdrop_jet[:len(truth_jets)]-truth_jets)/truth_jets)
         
         
         diff_obs = np.nan_to_num(diff_obs, -999)
@@ -360,8 +409,9 @@ if __name__ == "__main__":
         diff_SD = np.nan_to_num(diff_SD, -999)
         
         hist_kwargs["percentile_lst"]=[5, 95]  # for eta/phi
+        args = (diff_SD, diff_obs, diff_gen)
         
-        eval_fw.plot_marginals(diff_gen, diff_SD, diff_obs,
+        eval_fw.plot_marginals(*args,
                                 col_name=col_to_plot[:2],
                                 hist_kwargs=hist_kwargs,
                                 save_path=f"{save_path}/diff_jets_" if save_figs else None,
@@ -371,7 +421,7 @@ if __name__ == "__main__":
 
         hist_kwargs["percentile_lst"]=[2.5, 97.5] # for pt/mass
         
-        eval_fw.plot_marginals(diff_gen, diff_SD, diff_obs,
+        eval_fw.plot_marginals(*args,
                                 col_name=col_to_plot[2:],
                                 hist_kwargs=hist_kwargs,
                                 save_path=f"{save_path}/diff_jets_" if save_figs else None,
@@ -433,8 +483,8 @@ if __name__ == "__main__":
                                                                norm_width=True)
         eutils.plot_post_spread(post_width, x_value_of_width, var_names = ["mass", "pt"],
                                bins_wth=10)
-
     if config.plot_images and "single" in config.csv_sample_to_load: # generate a single value per ctxt
+        os.makedirs(f"{save_path}/imgs/", exist_ok=True)
         print("need to load diffusion data")
         gen_data_cnts = eval_fw.get_eval_files(should_contain="cnts_"+config.csv_sample_to_load.split("_")[0])
         
@@ -449,97 +499,106 @@ if __name__ == "__main__":
         eval_truth= np.load('/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/data/top_jet.npy',
                             allow_pickle=True).item()
 
-        eval_truth = {"cnts": eval_fw.data.cnts_vars_rel,
-                      "mask": eval_fw.data.mask_cnts}
-        
+        eval_truth = {
+            "cnts": eval_fw.data.cnts_vars,
+            # "cnts": eval_fw.data.cnts_vars_rel,
+            "mask": eval_fw.data.mask_cnts}
+
 
         style={"range":[[-2.5, 2.5], [-np.pi, np.pi]], "bins":64}
 
         mask_sd = np.all(softdrop_cnts!=0, -1)
         softdrop_cnts_rel = phy.relative_pos(softdrop_cnts[:100],
-                                    softdrop_jet.iloc[:100],
+                                    softdrop_jet[:100],
                                     mask=mask_sd[:100],
                                     reverse=False)
 
         ctxt_cnts_rel = phy.relative_pos(eval_ctxt["cnts"][:100],
-                                    truth_jets[["eta", "phi", "pt"]].iloc[:100],
-                                    # eval_ctxt["scalars"][:100],
+                                    # truth_jets[:100],
+                                    eval_ctxt["scalars"][:100],
                                     mask=eval_ctxt["mask"][:100],
                                     reverse=False)
-        ctxt_cnts = eval_ctxt["cnts"][:100]
-
-        truth_cnts = phy.relative_pos(eval_truth["cnts"][:100],
-                                    truth_jets[["eta", "phi", "pt"]].iloc[:100].values,
-                                    # eval_ctxt["scalars"][:100],
-                                    mask=eval_truth["mask"][:100],
-                                    reverse=True)
 
         gen_cnts_rel = phy.relative_pos(gen_cnts[:100],
-                                    truth_jets.iloc[:100],
+                                    gen_jets[:100],
                                     mask=mask[:100],
                                     reverse=False)
-        
+        # ctxt_cnts = eval_ctxt["cnts"][:100]
+
+        # truth_cnts = phy.relative_pos(eval_truth["cnts"][:100],
+        #                             # truth_jets[:100],
+        #                             eval_ctxt["scalars"][:100],
+        #                             mask=eval_truth["mask"][:100],
+        #                             reverse=True)
+
+
         # ctxt_images = np.clip(np.log(pc_2_image(eval_ctxt["cnts"][:100], style)+1), 0, 1)
         # scatterplot
-        n=20
+
+        n=2
         style_truth = {"facecolors":'none', "edgecolors":'black', "linewidth":2,
-                       "label": "Top",
+                       "label": "Ground truth",
                        "alpha": 1}
+        import matplotlib.lines as mlines
+        eval_mask = eval_ctxt["mask"]
+        for idx in range(2):
+            min_vals = eval_ctxt["cnts"][idx].min(0)
+            max_vals = eval_ctxt["cnts"][idx].max(0)
+            for sample, mask_, style, name in zip(
+                # [ctxt_cnts_rel, softdrop_cnts_rel, gen_cnts_rel],
+                [eval_ctxt["cnts"], softdrop_cnts[:100], gen_cnts[:100]],
+                [eval_mask, mask_sd, mask],
+                [{"color": "red", "label": "Obs. jet"},
+                {"color": "green", "label": "SoftDrop"},
+                {"color": "blue", "label": "Vipr"},
+                ],
+                ["obs", "sd", "vipr"]
+                ):
+                fig, ax = plt.subplots(1,1, figsize=(8,8))
+                
+                sample[idx, :, 1] = phy.rescale_phi(sample[idx, :, 1])
+                
+                ax.scatter(sample[idx, :, 0][mask_[idx]],
+                            sample[idx, :, 1][mask_[idx]],
+                            s=sample[idx, :, 2][mask_[idx]]*n,
+                            # s=np.exp(sample[idx, :, 2][mask_[idx]])*n,
+                            **style
+                            )
 
-        for i in range(1):
-            fig, (ax, ax1, ax2) = plt.subplots(1,3, figsize=(3*6,6), sharex=True, sharey=True)
-            mask_pu = np.ones_like(eval_ctxt["mask"][i])
-            mask_pu[:len(eval_truth["mask"][i])] = ~eval_truth["mask"][i]
-            
-            
-            ax.scatter(ctxt_cnts_rel[i, :, 0][eval_ctxt["mask"][i]],
-                        ctxt_cnts_rel[i, :, 1][eval_ctxt["mask"][i]],
-                        s=(ctxt_cnts_rel[i, :, 2][eval_ctxt["mask"][i]])*n,
-                        color="red", alpha=1, label="Obs. jet"
-                        )
+                ax.scatter(eval_truth["cnts"][idx, :, 0][eval_truth["mask"][idx]],
+                        eval_truth["cnts"][idx, :, 1][eval_truth["mask"][idx]],
+                            s=eval_truth["cnts"][idx, :, 2][eval_truth["mask"][idx]]*n,
+                            # s=np.exp(eval_truth["cnts"][idx, :, 2][eval_truth["mask"][idx]])*n,
+                            **style_truth
+                )
 
-            ax.scatter(eval_truth["cnts"][i, :, 0][eval_truth["mask"][i]],
-                       eval_truth["cnts"][i, :, 1][eval_truth["mask"][i]],
-                        s=(eval_truth["cnts"][i, :, 2][eval_truth["mask"][i]])*n*2,
-                        **style_truth
-                        )
+                # Create a legend for the circle sizes
+                markers = []
+                for circle_size in [np.sqrt(10), np.sqrt(100)]:  # Adjust sizes as needed
+                    markers.append(mlines.Line2D([], [], color='black', marker='.', linestyle='None',
+                                                 
+                                                markersize=circle_size*n, label=f"{str(int(circle_size**2))} [GeV]"))
+                # # Create a new axes object in the same location as the original
+                ax2 = ax.twinx()
+                ax2.axis('off')
 
-            # SoftDrop
-            ax1.scatter(softdrop_cnts_rel[i, :, 0][mask_sd[i]],
-                       softdrop_cnts_rel[i, :, 1][mask_sd[i]],
-                        s=(softdrop_cnts_rel[i, :, 2][mask_sd[i]])*n, color="green",
-                        label="SoftDrop", alpha=0.50
-                        )
+                ax2.legend(handles=markers,#bbox_to_anchor=(0.5, 1.1),
+                           loc='lower left',
+                            # title=r"p$_T$ scaling [GeV]",
+                           frameon=False#, ncol=len(markers)
+                           )
 
-            ax1.scatter(eval_truth["cnts"][i, :, 0][eval_truth["mask"][i]],
-                       eval_truth["cnts"][i, :, 1][eval_truth["mask"][i]],
-                        s=(eval_truth["cnts"][i, :, 2][eval_truth["mask"][i]])*n*2,
-                        **style_truth
-                        )
-            
-            # VIPR
-            ax2.scatter(gen_cnts_rel[i, :, 0][mask[i]],
-                       gen_cnts_rel[i, :, 1][mask[i]],
-                        s=(gen_cnts_rel[i, :, 2][mask[i]])*n, color="blue",
-                        label="Vipr", alpha=0.50
-                        )
+                plt.tight_layout()
 
-            ax2.scatter(eval_truth["cnts"][i, :, 0][eval_truth["mask"][i]],
-                       eval_truth["cnts"][i, :, 1][eval_truth["mask"][i]],
-                        s=(eval_truth["cnts"][i, :, 2][eval_truth["mask"][i]])*n*2,
-                        **style_truth
-                        )
-            
-            plt.tight_layout()
-            ax.set_ylim(-1, 1)
-            ax.set_xlim(-1,1)
-
-            for axs in [ax,ax1,ax2]:
-                axs.set_xlabel(r"$\Delta \eta$")
-                axs.set_ylabel(r"$\Delta \phi$")
-                axs.legend(frameon=False)
-        if save_figs:
-            misc.save_fig(fig, f"{save_path}/scatter_images.pdf")
+                ax.set_ylim(min_vals[1], max_vals[1])
+                ax.set_xlim(min_vals[0], max_vals[0])
+                # ax.set_xlabel(r"$\Delta \eta$")
+                # ax.set_ylabel(r"$\Delta \phi$")
+                ax.set_xlabel(r"$\eta$")
+                ax.set_ylabel(r"$\phi$")
+                ax.legend(frameon=False, loc="upper left")
+                if save_figs:
+                    misc.save_fig(fig, f"{save_path}/imgs/scatter_images_{name}_{idx}.pdf")
         
         # # images
         # gen_images = np.clip(np.log(
