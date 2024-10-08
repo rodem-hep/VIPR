@@ -486,15 +486,22 @@ if __name__ == "__main__":
     if config.plot_images and "single" in config.csv_sample_to_load: # generate a single value per ctxt
         os.makedirs(f"{save_path}/imgs/", exist_ok=True)
         print("need to load diffusion data")
-        gen_data_cnts = eval_fw.get_eval_files(should_contain="cnts_"+config.csv_sample_to_load.split("_")[0])
+        eval_files = glob('/srv/beegfs/scratch/users/a/algren/trained_networks/diffusion/online/jet_2024_02_12_15_29_33_272016/eval_files/flow_N/jet_flow_2024_03_11_13_29_10_850955/post/flow_N/*')
+        gen_data_cnts = eval_fw.get_eval_files(should_contain="mu_200",
+                                               eval_files=eval_files,
+                                               specific_file=".h5")
         
-        gen_cnts = gen_data_cnts[f"gen_cnts_{config.csv_sample_to_load}{name}_size_{size}"].reset_index(drop=True)
+        gen_cnts = gen_data_cnts['gen_cnts_posterior_2000_pileup_mu_200_std_0_size_9999']
 
         # create pc
-        gen_cnts, mask = matrix_to_point_cloud(gen_cnts[["eta", "phi", "pt"]].values,
-                                                gen_cnts["eventNumber"].values,
+        gen_cnts, mask = matrix_to_point_cloud(gen_cnts[:, :3],gen_cnts[:, 3],
                                             #   num_per_event_max=max_cnts
                                                 )
+
+        # gen_cnts, mask = matrix_to_point_cloud(gen_cnts[["eta", "phi", "pt"]].values,
+        #                                         gen_cnts["eventNumber"].values,
+        #                                     #   num_per_event_max=max_cnts
+        #                                         )
         # get truth
         eval_truth= np.load('/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/data/top_jet.npy',
                             allow_pickle=True).item()
@@ -541,19 +548,21 @@ if __name__ == "__main__":
                        "alpha": 1}
         import matplotlib.lines as mlines
         eval_mask = eval_ctxt["mask"]
-        for idx in range(2):
-            min_vals = eval_ctxt["cnts"][idx].min(0)
-            max_vals = eval_ctxt["cnts"][idx].max(0)
-            for sample, mask_, style, name in zip(
-                # [ctxt_cnts_rel, softdrop_cnts_rel, gen_cnts_rel],
-                [eval_ctxt["cnts"], softdrop_cnts[:100], gen_cnts[:100]],
-                [eval_mask, mask_sd, mask],
-                [{"color": "red", "label": "Obs. jet"},
-                {"color": "green", "label": "SoftDrop"},
-                {"color": "blue", "label": "Vipr"},
-                ],
-                ["obs", "sd", "vipr"]
-                ):
+        min_vals = eval_ctxt["cnts"][0].min(0)
+        max_vals = eval_ctxt["cnts"][0].max(0)
+        for sample, mask_, style, name, idx_vals in zip(
+            # [ctxt_cnts_rel, softdrop_cnts_rel, gen_cnts_rel],
+            [eval_ctxt["cnts"], softdrop_cnts[:100], gen_cnts[:100]],
+            [eval_mask, mask_sd, mask],
+            [{"color": "red", "label": "Obs. jet"},
+            {"color": "green", "label": "SoftDrop"},
+            {"color": "blue", "label": "VIPR"},
+            ],
+            ["obs", "sd", "vipr"],
+            [1,1,8]
+            ):
+            
+            for idx in range(idx_vals):
                 fig, ax = plt.subplots(1,1, figsize=(8,8))
                 
                 sample[idx, :, 1] = phy.rescale_phi(sample[idx, :, 1])
@@ -565,9 +574,9 @@ if __name__ == "__main__":
                             **style
                             )
 
-                ax.scatter(eval_truth["cnts"][idx, :, 0][eval_truth["mask"][idx]],
-                        eval_truth["cnts"][idx, :, 1][eval_truth["mask"][idx]],
-                            s=eval_truth["cnts"][idx, :, 2][eval_truth["mask"][idx]]*n,
+                ax.scatter(eval_truth["cnts"][0, :, 0][eval_truth["mask"][0]],
+                        eval_truth["cnts"][0, :, 1][eval_truth["mask"][0]],
+                            s=eval_truth["cnts"][0, :, 2][eval_truth["mask"][0]]*n,
                             # s=np.exp(eval_truth["cnts"][idx, :, 2][eval_truth["mask"][idx]])*n,
                             **style_truth
                 )
@@ -575,46 +584,25 @@ if __name__ == "__main__":
                 # Create a legend for the circle sizes
                 markers = []
                 for circle_size in [np.sqrt(10), np.sqrt(100)]:  # Adjust sizes as needed
-                    markers.append(mlines.Line2D([], [], color='black', marker='.', linestyle='None',
-                                                 
+                    markers.append(mlines.Line2D([], [], color='black',
+                                                 marker='.', linestyle='None',   
                                                 markersize=circle_size*n, label=f"{str(int(circle_size**2))} [GeV]"))
                 # # Create a new axes object in the same location as the original
                 ax2 = ax.twinx()
                 ax2.axis('off')
 
                 ax2.legend(handles=markers,#bbox_to_anchor=(0.5, 1.1),
-                           loc='lower left',
+                            loc='lower left',
                             # title=r"p$_T$ scaling [GeV]",
-                           frameon=False#, ncol=len(markers)
-                           )
+                            frameon=False#, ncol=len(markers)
+                            )
 
                 plt.tight_layout()
 
                 ax.set_ylim(min_vals[1], max_vals[1])
                 ax.set_xlim(min_vals[0], max_vals[0])
-                # ax.set_xlabel(r"$\Delta \eta$")
-                # ax.set_ylabel(r"$\Delta \phi$")
                 ax.set_xlabel(r"$\eta$")
                 ax.set_ylabel(r"$\phi$")
                 ax.legend(frameon=False, loc="upper left")
                 if save_figs:
                     misc.save_fig(fig, f"{save_path}/imgs/scatter_images_{name}_{idx}.pdf")
-        
-        # # images
-        # gen_images = np.clip(np.log(
-        #     pc_2_image(gen_cnts[:100], mask=mask, style_kwargs=style)
-        #     +1), 0, 1)
-        # ctxt_images = np.clip(np.log(
-        #     pc_2_image(ctxt_cnts[:100], mask=eval_ctxt["mask"][:100], style_kwargs=style)
-        #     +1), 0, 1)
-        # truth_images = np.clip(np.log(
-        #     pc_2_image( truth_cnts[:100], mask= eval_fw.data.mask_cnts[:len(gen_jets)],
-        #                style_kwargs=style)+1), 0, 1)
-        
-        # eval_fw.plot_images(gen_images[..., None], name="gen_image", wandb_bool=False,
-        #                     save_path=f"{save_path}/gen_images_" if save_figs else None)
-        # eval_fw.plot_images(ctxt_images[..., None], name="gen_image", wandb_bool=False,
-        #                     save_path=f"{save_path}/ctxt_images_"if save_figs else None)
-        # eval_fw.plot_images(truth_images[..., None], name="gen_image", wandb_bool=False,
-        #                     save_path=f"{save_path}/truth_images_"if save_figs else None)
-

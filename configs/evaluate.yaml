@@ -7,8 +7,8 @@ jet_sub_vars : ["tau_21", "tau_32", "d12", "d23", "d2", "mass", "pt"]
 
 
 # glob settings
-generate_substructure: False
-n_post_to_gen: 512 # >1 generate posterior
+generate_substructure: True
+n_post_to_gen: 1 # >1 generate posterior
 combine_ctxt_size: 1
 csv_sample_to_load: single #posterior_${eval.size} #single 
 plot_images: True
@@ -34,13 +34,13 @@ eval:
 
   data_cfg: 
     pileup_dist_args:
-      mu: 200
-      std: 0 # 50 or 0
+      mu: 300 # 50, 60, 70, 80, 90, 100, 150, 200, 250, 300
+      std: 0 # 50 or 0 
 
 
   loader_config:
     batch_size: 512
-    num_workers: 8
+    num_workers: 4
   
   eval_cfg:
     n_diffusion_steps: 100

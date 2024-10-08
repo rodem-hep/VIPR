@@ -714,6 +714,11 @@ if __name__ == "__main__":
         PILEUP_PATH = ["/home/users/a/algren/scratch/diffusion/pileup/pileup.csv"]
         paths = misc.load_yaml("/srv/beegfs/scratch/groups/rodem/datasets/pileup_jets/top/path_lists.yaml")
         
+        # paths = glob('/srv/beegfs/scratch/groups/rodem/datasets/RODEMJetTagging/train/ttbar/*')
+        # import h5py
+        # data = h5py.File(paths[0], 'r') as h5_file
+        
+        # sys.exit()
         test_path = paths["test_path"]
         
         if False: # count total number of cnts
