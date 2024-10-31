@@ -101,6 +101,7 @@ def jet_variables(sample, mask):
     
     return jet_vars
 
+
 class PileupDist:
     def __init__(self, mu, std):
         self.mu=mu

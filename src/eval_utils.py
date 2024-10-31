@@ -53,10 +53,10 @@ class EvaluateFramework:
         for nr, name in enumerate(col_name):
             if ratio_bool:
                 fig, (ax_1, ax_2) = plt.subplots(
-                    2, 1, gridspec_kw={"height_ratios": [3, 1]}, figsize=(8, 6), sharex="col"
+                    2, 1, gridspec_kw={"height_ratios": [3, 1]}, figsize=kwargs.get('figsize', (8,6)), sharex="col"
                     )
             else:
-                fig, ax_1 = plt.subplots(1, figsize=(8, 6))
+                fig, ax_1 = plt.subplots(1, figsize=kwargs.get('figsize', (8,6)))
             
             # unpack data
             data_col = [d[:,nr] for d in args]

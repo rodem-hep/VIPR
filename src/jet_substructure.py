@@ -16,8 +16,60 @@ import pyjet
 from dotmap import DotMap
 from tqdm import tqdm
 import pandas as pd
+try:
+    from tools.physics.detector_coords import numpy_locals_to_mass_and_pt
+except:
+    def undo_log_squash(data: np.ndarray) -> np.ndarray:
+        """Undo the log squash function above."""
+        if isinstance(data, T.Tensor):
+            return T.sign(data) * (T.exp(T.abs(data)) - 1)
+        else:
+            return np.sign(data) * (np.exp(np.abs(data)) - 1)
+    def calculate_pT(px, py):
+        return np.sqrt(px**2+py**2)
 
-from tools.physics.detector_coords import numpy_locals_to_mass_and_pt
+    def calculate_phi(px, py):
+        return np.arctan2(py, px) # np.arccos(px/pT)
+
+    def calculate_eta(pz, pT):
+        return np.arcsinh(pz/pT)
+    def numpy_locals_to_mass_and_pt(csts: np.ndarray, mask: np.ndarray,
+                                    undo_logsquash: bool = False
+                                    ) -> np.ndarray:
+        """Calculate the overall jet pt and mass from the constituents. The
+        constituents are expected to be expressed as:
+
+        - eta
+        - phi
+        - pt
+        """
+
+        # Calculate the constituent pt, eta and phi
+        eta = csts[..., 0]
+        phi = csts[..., 1]
+        pt = undo_log_squash(csts[..., 2]) if undo_logsquash else csts[..., 2]
+        
+
+        # Calculate the total jet values in cartensian coordinates, include mask for sum
+        if len(mask.shape)==1:
+            jet_px = (pt[mask] * np.cos(phi[mask])).sum(axis=-1)
+            jet_py = (pt[mask] * np.sin(phi[mask])).sum(axis=-1)
+            jet_pz = (pt[mask] * np.sinh(eta[mask])).sum(axis=-1)
+            jet_e = (pt[mask] * np.cosh(eta[mask])).sum(axis=-1)
+        else:
+            jet_px = (pt * np.cos(phi) * mask).sum(axis=-1)
+            jet_py = (pt * np.sin(phi) * mask).sum(axis=-1)
+            jet_pz = (pt * np.sinh(eta) * mask).sum(axis=-1)
+            jet_e = (pt * np.cosh(eta) * mask).sum(axis=-1)
+        # Get the derived jet values, the clamps ensure NaNs dont occur
+        jet_pt = np.sqrt(np.clip(jet_px**2 + jet_py**2, 0, None))
+        jet_m = np.sqrt(np.clip(jet_e**2 - jet_px**2 - jet_py**2 - jet_pz**2, 0, None))
+        
+        # position of jet
+        jet_phi = calculate_phi(jet_px, jet_py)
+        jet_eta = calculate_eta(jet_pz, jet_pt)
+
+        return np.vstack([jet_px, jet_py, jet_pz, jet_eta, jet_phi, jet_pt, jet_m]).T
 
 
 def dij(

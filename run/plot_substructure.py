@@ -25,8 +25,14 @@ def relative_error(pred, truth):
     re = (pred-truth[:len(pred)])/truth[:len(pred)]
     return np.nan_to_num(re,-999, posinf=-999, neginf=-999)
 
+plt.rcParams['font.size'] = 22  # General font size
+plt.rcParams['axes.labelsize'] = 22  # Font size for x and y labels
+plt.rcParams['xtick.labelsize'] = 22  # Font size for x-tick labels
+plt.rcParams['ytick.labelsize'] = 22  # Font size for y-tick labels
+plt.rcParams['legend.fontsize'] = 22  # Font size for legend
+figsize=(1*8,1*6)
+
 if __name__ == "__main__":
-    plt.rcParams['font.size'] = 20
     # general setup
     config = hydra_utils.hydra_init(str(root/"configs/evaluate.yaml"))
 
@@ -44,8 +50,8 @@ if __name__ == "__main__":
     
     # substructure variables
     jet_vars = config.jet_sub_vars
-    jet_labels = [r"$\tau_{21}$", r"$\tau_{32}$", r"d$_{12}$", r"d$_{23}$",
-                r"d$_{2}$", "Mass", r"$p_\mathrm{T}$"]
+    jet_labels = [r"$\tau_{21}$", r"$\tau_{32}$", r"$\sqrt{\mathrm{d}_{12}}$", 
+                  r"$\sqrt{\mathrm{d}_{23}}$", r"D$_{2}$", "Mass", r"$p_\mathrm{T}$"]
     
     name = get_pileup_name(eval_fw.data.pileup_dist_args)
     
@@ -63,7 +69,7 @@ if __name__ == "__main__":
     obs_jets = np.nan_to_num(obs_jets[jet_vars], -999)
     
     # get softdrop
-    file_list_sd =glob(f"{config.softdrop_path}/softdrop/zcut_0_05_beta_2/*{name}*{file_type}")
+    file_list_sd =glob(f"{config.softdrop_path}/softdrop/zcut_0_05_beta_2/*{name}*_HLV*")
     legend_name = r"$z_{\mathrm{cut}} = $0.05,"+'\n'+r"$\beta$ = 2.0"
     hist_kwargs['dist_styles'][1]['label'] += f":\n{legend_name}"
     
@@ -94,6 +100,7 @@ if __name__ == "__main__":
                             xlabels=jet_labels,
                             hist_kwargs=hist_kwargs,
                             ratio_kwargs=ratio_kwargs,
+                            figsize=figsize,
                             )
     hist_kwargs["dist_styles"] = hist_kwargs["dist_styles"][1:]
     
@@ -113,6 +120,7 @@ if __name__ == "__main__":
         black_line_bool=True,
         sym_percentile=95,
         legend_kwargs=hist_kwargs['legend_kwargs'],
+        figsize=figsize,
         )
 
     # performance as a function of mu
@@ -151,6 +159,9 @@ if __name__ == "__main__":
         # SD - handling multiple sd files
         softdrop=glob(f"{config.softdrop_path}/softdrop/*")
         for sp_folder in softdrop:
+            
+            if 'beta_3' in sp_folder:
+                continue
 
             sp_hp = sp_folder.split("/")[-1]
             if sp_hp not in sd_mu:
@@ -174,7 +185,7 @@ if __name__ == "__main__":
             sd_mu[j][i] = np.concatenate(sd_mu[j][i], 1)
 
 
-    figsize=(1.5*8,1.5*6)
+    lw=3
     for i, name in enumerate(jet_labels):
 
         fig,ax = plt.subplots(1,1, figsize=figsize)
@@ -184,17 +195,20 @@ if __name__ == "__main__":
         # ax.plot(mu_lst,np.zeros_like(mu_lst),label = "Zero line",
         #          color="black", ls="dotted", lw=3)
 
-        ax_m.plot(mu_lst[: len(obs_mu["median"][i, :])], obs_mu["median"][i, :],label="Obs.", color="red")
-        ax.plot(mu_lst[: len(obs_mu["width"][i, :])], obs_mu["width"][i, :],label="Obs.", color="red")
+        ax_m.plot(mu_lst[: len(obs_mu["median"][i, :])], obs_mu["median"][i, :],
+                  label="Obs.", color="red", lw=lw, ls="dotted")
+        ax.plot(mu_lst[: len(obs_mu["width"][i, :])], obs_mu["width"][i, :],
+                label="Obs.", color="red", lw=lw, ls="dotted")
+
         for j, line in zip(vipr_mu, ["solid", "dashed"]):
             ax_m.plot(mu_lst, vipr_mu[j]["median"][i, :],label=j,
-                        color="blue", ls=line)
+                        color="blue", ls=line, lw=lw)
             ax.plot(mu_lst, vipr_mu[j]["width"][i, :],label=j,
-                    color="blue", ls=line)
+                    color="blue", ls=line, lw=lw)
 
 
         # plot n sd parameters
-        if False: # plot the envolope of all sd parameters
+        if True: # plot the envolope of all sd parameters
             for ax_i,key in zip([ax, ax_m], ["width", "median"]):
                 unc_min = np.min([sd_mu[k][key] for k in sd_mu], 0)
                 unc_max = np.max([sd_mu[k][key] for k in sd_mu], 0)
@@ -206,7 +220,7 @@ if __name__ == "__main__":
                 pred = sd_mu["zcut_0_05_beta_2"][key]
                 legend_name = r"$z_{\mathrm{cut}} = $0.05"+r" $\beta$=2.0"
                 ax_i.plot(mu_lst, pred[i, :], label=legend_name, color="green",
-                          ls='dashed')
+                          ls='dashed', lw=lw)
         # else: # plot all sd parameters
         else: # plot all sd parameters
             for nr, j in enumerate(sd_mu):
@@ -217,9 +231,9 @@ if __name__ == "__main__":
                 legend_name = r"$z_{\mathrm{cut}} = $"+zcut+r" $\beta$= "+beta
                 
                 ax_m.plot(mu_lst, sd_mu[j]["median"][i, :],label=f"SD: {legend_name}", color="green",
-                            ls=plot_utils.linestyle_tuple[nr][1])
+                            ls=plot_utils.linestyle_tuple[nr][1], lw=lw)
                 ax.plot(mu_lst, sd_mu[j]["width"][i, :],label=f"SD: {legend_name}", color="green",
-                        ls=plot_utils.linestyle_tuple[nr][1])
+                        ls=plot_utils.linestyle_tuple[nr][1], lw=lw)
         
 
         for ax_i,j in zip([ax, ax_m], ["IQR", "Bias"]):
@@ -227,8 +241,14 @@ if __name__ == "__main__":
             ax_i.set_ylabel(f"{j} of RE({name})")
             ax_i.set_xlabel(r"$\mu$")
             ax_i.set_xlim([50, 300])
-        # ax.set_ylim([0, 1])
+            ylim=ax_i.get_ylim()
+            top_y = 1.7
+            if 'tau' in jet_vars[i]:
+                top_y = 2
+                
+            ax_i.set_ylim([ylim[0], ylim[1]*top_y])
         # ax_m.set_ylim([-0.1, 1])
+        plt.tight_layout()
 
         # ax.set_yscale("log")
         if config.save_figures:

@@ -63,7 +63,7 @@ def main(config):
         obs_jet_file_name = f"{config.obs_jets_path}/jet_subs/jet_substructure_ctxt_{full_name}.h5"
         
         if ("single" in config.csv_sample_to_load
-            and not os.path.isfile(obs_jet_file_name) and True): # substruct for obs. jet
+            and not os.path.isfile(obs_jet_file_name)): # substruct for obs. jet
             os.makedirs(f"{config.obs_jets_path}/jet_subs/",
                         exist_ok=True)
             

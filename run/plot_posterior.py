@@ -17,7 +17,8 @@ import src.eval_utils as eutils
 from plot_eval import get_pileup_name
 from sklearn.calibration import calibration_curve
 # substructure variables
-jet_labels = [r"$\tau_{21}$", r"$\tau_{32}$", r"d$_{12}$", r"d$_{23}$", r"d$_{2}$", "Mass", r"$p_\mathrm{T}$"]
+jet_labels = [r"$\tau_{21}$", r"$\tau_{32}$", r"$\sqrt{\mathrm{d}_{12}}$", 
+                r"$\sqrt{\mathrm{d}_{23}}$", r"D$_{2}$", "Mass", r"$p_\mathrm{T}$"]
 
 
 if __name__ == "__main__":
@@ -108,7 +109,7 @@ if __name__ == "__main__":
             counts, _ = plot.plot_hist(np.random.uniform(0, 100, size=10_000_000), vals,
                                         style={"bins":10, "range": [0,100]},
                                         dist_styles = [uni_d_s,
-                                                       {"label": name, "color": plot.COLORS[nr]}],
+                                                       {"label": name, "color": 'blue'}],
                                         weights=[np.ones(10_000_000)/10_000_000,
                                                  np.ones_like(vals)/len(vals)],
                                         ax=ax_1,
@@ -116,7 +117,7 @@ if __name__ == "__main__":
                                                        "title_fontsize":22}
                                         )
             plot.plot_ratio(counts, truth_key="dist_0", ax=ax_2,
-                            styles=[{"color": "black"}, {"color": plot.COLORS[nr]}], ylim=[0.5, 1.5],
+                            styles=[{"color": "black"}, {"color": 'blue'}], ylim=[0.5, 1.5],
                             zero_line_unc=True)
             bins = counts["bins"]/100
             counts0 = counts["dist_0"]["counts"][0]

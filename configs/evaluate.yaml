@@ -28,14 +28,14 @@ eval:
     N(200, 50): ${glob_path}/online/jet_2024_02_12_15_29_33_272016 # N(200, 10) correct normalization
     N(60, 10):  ${glob_path}/online/jet_2024_02_17_14_17_07_224394 # N(60, 10) correct normalization
 
-  size: 10_000 # 100_000 / 2000
+  size: 100_000 # 100_000 / 2000
   device: cpu
   format: ".pdf"
 
   data_cfg: 
     pileup_dist_args:
-      mu: 300 # 50, 60, 70, 80, 90, 100, 150, 200, 250, 300
-      std: 0 # 50 or 0 
+      mu: 200 # 50, 60, 70, 80, 90, 100, 150, 200, 250, 300
+      std: 50 # 50 or 0 
 
 
   loader_config:
@@ -54,19 +54,25 @@ hist_kwargs:
   dist_styles:
     - label: Top
       color: black
+      lw: 2
 
     - label: SoftDrop
       color: green
+      ls: 'dashed'
+      lw: 2
 
     - label: Obs.
       color: red
+      ls: 'dotted'
+      lw: 2
 
     # - label: Vipr
     #   color: blue
 
     - label: 'VIPR'
       color: blue
-      # ls: dashed
+      ls: solid
+      lw: 2
 
 ratio_kwargs:
   styles: 

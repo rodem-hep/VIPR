@@ -1,0 +1,5 @@
+
+#glob configs
+
+#### PATHS
+container_path: /home/users/a/algren/singularity_images/diffusion-torch-2.2.0.sif

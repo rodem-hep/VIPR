@@ -319,6 +319,13 @@ class EvaluatePhysics(eutils.EvaluateFramework):
         return all_gen_jets, all_gen_cnts
 
 
+plt.rcParams['font.size'] = 20  # General font size
+plt.rcParams['axes.labelsize'] = 30  # Font size for x and y labels
+plt.rcParams['xtick.labelsize'] = 30  # Font size for x-tick labels
+plt.rcParams['ytick.labelsize'] = 30  # Font size for y-tick labels
+plt.rcParams['legend.fontsize'] = 25  # Font size for legend
+figsize=(1*8,1*6)
+
 if __name__ == "__main__":
     # %matplotlib widget
     config = hydra_utils.hydra_init(str(root/"configs/evaluate.yaml"))
@@ -503,7 +510,10 @@ if __name__ == "__main__":
         #                                     #   num_per_event_max=max_cnts
         #                                         )
         # get truth
-        eval_truth= np.load('/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/data/top_jet.npy',
+        # eval_truth= np.load('/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/data/top_jet.npy',
+        #                     allow_pickle=True).item()
+        # get truth
+        eval_truth= np.load('/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/top_jets/top_jet_size_99990_10_07_2024_11_26_49.npy',
                             allow_pickle=True).item()
 
         eval_truth = {
@@ -563,7 +573,7 @@ if __name__ == "__main__":
             ):
             
             for idx in range(idx_vals):
-                fig, ax = plt.subplots(1,1, figsize=(8,8))
+                fig, ax = plt.subplots(1,1, figsize=figsize)
                 
                 sample[idx, :, 1] = phy.rescale_phi(sample[idx, :, 1])
                 
@@ -585,14 +595,14 @@ if __name__ == "__main__":
                 markers = []
                 for circle_size in [np.sqrt(10), np.sqrt(100)]:  # Adjust sizes as needed
                     markers.append(mlines.Line2D([], [], color='black',
-                                                 marker='.', linestyle='None',   
+                                                 marker='.', linestyle='None',
                                                 markersize=circle_size*n, label=f"{str(int(circle_size**2))} [GeV]"))
                 # # Create a new axes object in the same location as the original
                 ax2 = ax.twinx()
                 ax2.axis('off')
 
                 ax2.legend(handles=markers,#bbox_to_anchor=(0.5, 1.1),
-                            loc='lower left',
+                            loc='lower right',
                             # title=r"p$_T$ scaling [GeV]",
                             frameon=False#, ncol=len(markers)
                             )
