@@ -3,210 +3,239 @@
 import os
 import copy
 from glob import glob
+from functools import partial
+from typing import List, Tuple, Callable 
 
 import torch as T
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
+import pytorch_lightning as L
+from sklearn.metrics import roc_auc_score
+from torch.utils.data import DataLoader
 
 # internal
-from tools import misc
-from tools import schedulers
-import src.diffusion_schemes as ds
-import tools.datamodule.pipeline as pl
 import src.positional_encoding as pe
+from run.eval_flow import DictDataset
 
-from tools.modules import IterativeNormLayer
+from tools.tools import misc, schedulers
+from tools.tools.modules import IterativeNormLayer
+from tools.tools.torch_utils import count_trainable_parameters, ema, make_ema
+from tools.tools.lightning import get_loss
 
-class DiffusionModel(
-    # ds.UniformDiffusion
-    ds.ElucidatingDiffusion
-    ):
-    def __init__(self, init_noise, embedding_cfg, train_cfg, eval_cfg, 
-                 network, save_path=None, train_loader=None, test_loader=None,
-                 wandb=None, device="cuda", **kwargs):
+
+def push_to_device(sample, device):
+    if isinstance(sample, dict):
+        return {k: push_to_device(v, device) for k, v in sample.items()}
+    elif isinstance(sample, T.Tensor):
+        return sample.to(device)
+    else:
+        return sample
+
+class TimeDependentAE(L.LightningModule):
+    def __init__(self, network:partial, train_config:dict, eval_fw: Callable=None,  save_path=None, **kwargs):
+        """
+        should get an
+        embedding network
+        sampling network with solver
+        evaluate framework
+        """
         super().__init__()
-        self.init_noise = init_noise
-        self.embedding_cfg=embedding_cfg
-        self.train_cfg=train_cfg
-        self.eval_cfg=eval_cfg
-        self.wandb=wandb
-        self.train_loader=train_loader
-        self.test_loader=test_loader
-        self.device=device
+        self.save_hyperparameters()
+
+        self.ema_sampler_val = kwargs.get("ema_sampler_val")
+        self.ema_embedder_val = kwargs.get("ema_embedder_val")
+        self.train_config = train_config
         self.save_path=save_path
-        self.run_eval = self.eval_cfg.eval_iters>0
-        # normalisers
-        self.ctxt_normaliser = None
-        self.ctxt_scalar_normaliser = None
+        self.eval_fw = eval_fw
+        self.precision = kwargs.get("precision", 32)
+        self.use_ema_in_eval = kwargs.get("use_ema_in_eval", True)
+        self.ctp={}
+        self.latn_dims = kwargs.get('latn_dims', 0)
+        self.batch=None
+        self.network = None
+        self.ema_embedding_network=None
+        self.ema_sampling_network=None
+        self.idx = None
+        self.ctp = {} # count trainable parameters
         
-
-        # mixed precision
-        self.loss_scaler = None
-        self.loss_scaler = T.cuda.amp.GradScaler()
-        self.eval_ctxt =None
-        inpt_shape = kwargs.get("inpt_shape")
-        if inpt_shape is None:
-            inpt_shape = self.train_loader.dataset._shape()
-
-        self.eval_fw = kwargs.get("eval_fw", self.test_loader)
-        self.out_trans = kwargs.get("out_trans", None)
-
-        # init normalization layers
-        self.normaliser = IterativeNormLayer(inpt_shape["images"][-1]).to(self.device)
-        if "ctxt_images" in inpt_shape:
-            self.ctxt_normaliser = IterativeNormLayer(inpt_shape["ctxt_images"][-1]).to(self.device)
-        if "ctxt_scalars" in inpt_shape:
-            self.ctxt_scalar_normaliser = IterativeNormLayer(inpt_shape["ctxt_scalars"][-1]).to(self.device)
-        
-        # push network to device        
-        self.network = network.to(self.device)
-
-        # copy network for ema
-        self.ema_network = copy.deepcopy(self.network)
-        self.ema_network.eval()
-
-        self.optimizer = T.optim.AdamW(self.network.parameters(),
-                                       lr=train_cfg.learning_rate)
-        if "lr_scheduler" in train_cfg:
-            self.lr_scheduler = schedulers.get_scheduler(optimizer=self.optimizer,
-                                                         **train_cfg.lr_scheduler)
-
-
-        # init log
-        self.log_columns=["epoch", "denoise_images", "lr"]
-        self.log_columns += [f"{j}_{i}" for i in ["train", "valid"]
-                                for j in ["noise_loss", "image_loss","clip"]]
-        self.log={i:[] for i in self.log_columns}
-        self.n_train_size=0
-
         # init loss function
-        self.loss = nn.MSELoss()
+        self.loss = get_loss(**self.train_config.get("loss_cfg", {'name':'mse'}))
 
-        # eval with same noise
-        if (self.test_loader is not None):
-            self.eval_ctxt = self.test_loader.dataset.get_normed_ctxt()
-
-            n_cnts=None
-            if "pc" in self.init_noise.datatype:
-                n_cnts = self.eval_ctxt.pop("true_n_cnts",self.test_loader.dataset.max_cnstits)
-            self.initial_noise = ds.generate_gaussian_noise(eval_ctxt=self.eval_ctxt,
-                                                            n_constituents=n_cnts,
-                                                            **self.init_noise)
-            if (("images" in self.eval_ctxt)
-                & ("image" in self.init_noise.datatype)):
-                #find std and mean of data
-                log = self.eval_fw(self.eval_ctxt["images"][:9], name="context_image")
-                self.log.update(log)
-
-        train_cfg["ctxt_dims"] = self.network.ctxt_dims
-        if "embedding" not in train_cfg:
-            train_cfg["embedding"] = "sinusoidal"
-        
-        # init embedding
-        if "sinusoidal" in train_cfg["embedding"]:
-            self.embedding = pe.Sinusoidal(device=self.device, **self.embedding_cfg)
+        if not hasattr(network, 'forward'):
+            self.sampling_network = network(loss=self.loss, latn_dims=self.latn_dims)
         else:
-            self.embedding = pe.FourierFeatures(1, device=self.device, **self.embedding_cfg)
-        
-        
-        # save best
-        self.noise_loss_best=999
-        
-        # save configs and make folder
-        if save_path is not None:
-            os.makedirs(save_path, exist_ok=True)
-            for i in ["figures", "states"]:
-                os.makedirs(f"{save_path}/{i}", exist_ok=True)
+            self.sampling_network = network
+            self.sampling_network.loss = self.loss
+            
+        if self.ema_sampler_val is not None:
+            self.ema_sampling_network = make_ema(self.sampling_network)
+
+        # count parameters
+        self.ctp["Sampling size"] = count_trainable_parameters(self.sampling_network)
+        self.init_val_log()
+
+    def init_val_log(self):
+        # setup validation step 
+        self.validation_dict = {i: [] for i in ["ctxt", "gen_data", 
+                                                "truth", "mask", "scalars"]}
+        self.validation_dict['ctxt'] = {i: [] for i in ["mask", "scalars", 'cnts']}
+
+    def configure_optimizers(self):
+        "configure optimizer and scheduler. If scheduler is not in train_config, it will be None."
+
+        # optimzer for sampling network and tasks (should be detached from embedding)
+        opt_samp = {"optimizer": T.optim.AdamW(self.parameters(), **self.train_config["opt_cfg"])}
+
+        # optimzer for embedding network
+        if "lr_scheduler" in self.train_config:
+            # config for scheduler if needed 
+            opt_samp["lr_scheduler"] = schedulers.get_scheduler(optimizer=opt_samp["optimizer"],**self.train_config.lr_scheduler)
+                                                                   
+        return opt_samp
+
+    def sampling_train_step(self, inpt:dict, training:bool=None) -> T.Tensor:
+        training = self.training if training is None else training
+
+        if (not training) and self.use_ema_in_eval:
+            return self.ema_sampling_network.train_step(**inpt)
+        else:
+            return self.sampling_network.train_step(**inpt)
+    
                 
-            misc.save_yaml(train_cfg, f"{save_path}/diffusion_cfg.yaml")
+    def _shared_step(self, batch, batch_idx, log_name:str="train") -> Tuple[T.Tensor, T.Tensor, T.Tensor | None]:
+        # total_loss = T.tensor(0.0, requires_grad=True)
 
-        # load old model if resumed
-        self.resume_run = False if wandb is None else wandb.run.resumed
-        if self.resume_run:
-            self.load()
+        # get task loss on ema networks
+        if 'ctxt' in batch:
+            batch["ctxt"].pop("labels", None)
         
-    def load(self, path:str=None):
-        "load model from path. If path is None, load last model from save_path"
-
-        if path is None:
-            path = self.save_path
-
-        path = misc.sort_by_creation_time(glob(f"{path}/states/diff*"))[-1]
+        # run sampling model
+        diff_loss = self.sampling_train_step(batch)
         
-        print(f"loading model from: {path}")
-        
-        state = T.load(path)
-        
-        # TODO remove this after normaliser is saved in correct shape (<09.02.2024)
-        state.update({i:j.flatten() for i,j in state.items() if "norm" in i})
-        
-        # load complet diffusion setup
-        self.load_state_dict(state)
-        
-        # load individual optimizer/network with additional info
-        states_to_load = T.load(path.replace("diffusion_", "model_"))
+        # log diffusion loss
+        self.log(f"{log_name}/loss", diff_loss, prog_bar=True)
+                
+        return diff_loss
 
-        self.ema_network.load_state_dict(states_to_load["model"])
+    def training_step(self, batch, batch_idx) -> T.Tensor:
+        return self._shared_step(batch, batch_idx, log_name="train")
+    
+    def on_train_epoch_start(self, *args, **kwargs) -> None:
+        pass
 
-        self.optimizer.load_state_dict(states_to_load["optimizer"])
-
-        if "scheduler" in states_to_load:
-            self.lr_scheduler.load_state_dict(states_to_load["scheduler"])
-
-    def save(self, path, additional_info={}):
-        # save complet diffusion setup
-        T.save(self.state_dict(), path)
-        
-        # save individual optimizer/network/scheduler with additional info
-        states_to_save = {
-            'model': self.ema_network.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'scheduler': self.lr_scheduler.state_dict(),
-            }
-
-        states_to_save.update(additional_info)
-
-        T.save(states_to_save, path.replace("diffusion_", "model_"))
-
-
-    def generate(self, images,  ctxt=None, mask=None):
-        # noise -> images -> denormalized images
+    def on_train_batch_end(self, *args, **kwargs) -> None:
+        """update ema with new parameters"""
         with T.no_grad():
-            generated_images = self.reverse_diffusion(images=images, ctxt=ctxt, mask=mask)
+            if self.ema_embedder_val is not None:
+                self.ema_embedding_network = ema(self.ema_embedding_network,
+                                                 self.embedding_network,
+                                                 self.ema_embedder_val)
 
-        generated_images = self.normaliser.reverse(generated_images, mask=mask).cpu()
+            if self.ema_sampler_val is not None:
+                self.ema_sampling_network = ema(self.ema_sampling_network,
+                                                 self.sampling_network,
+                                                 self.ema_sampler_val)
+            
+        if self.lr_schedulers is not None:
+            if isinstance(self.lr_schedulers(), list):
+                for i in self.lr_schedulers():
+                    i.step()
+            else:
+                self.lr_schedulers().step() 
 
-        # clip between 0 and 1 for images
-        if "image" in self.init_noise.datatype:
-            generated_images = T.clip(generated_images, 0, 1)
+    def validation_step(self, batch:dict, batch_idx:int):
+        "run validation batches and log results"
+                
+        # store input, mask and scalars for evaluation
+        # log input data
+        self.validation_dict["truth"].extend(batch["inpt"])
+        self.validation_dict["mask"].extend(batch["mask"])
+        for i in self.validation_dict['ctxt']:
+            if i in batch["ctxt"]:
+                self.validation_dict['ctxt'][i].extend(batch['ctxt'][i])
 
-        # create output dict
-        gen_data = {"gen_data": generated_images}
-        if ctxt is not None:
-            gen_data["ctxt"] = ctxt
-        if mask is not None:
-            gen_data["mask"] = mask
+        # get val loss
+        loss = self._shared_step(batch=copy.deepcopy(batch),
+                                 batch_idx=batch_idx, log_name="valid")
+        
+        #generate samples
+        # if len(self.validation_dict["generated"]):
+        noise = T.randn_like(batch["inpt"])
+        generated_sample = self.generate(noise=noise, ctxt=batch['ctxt'], mask=batch.get("mask", None))
 
-        return gen_data
+        self.validation_dict["gen_data"].extend(T.nan_to_num(generated_sample["gen_data"], -999))
 
+        return loss
+
+    def on_validation_epoch_end(self):
+        """log validation results over all valid batches"""
+        for i,j in self.validation_dict.items():
+            if len(j)==0:
+                continue
+            if isinstance(j, dict):
+                for k,l in j.items():
+                    if len(l)==0:
+                        continue
+                    vals = T.stack(l)
+                    if vals.dtype == T.bool:
+                        self.validation_dict[i][k] = vals.cpu().numpy()
+                    else:
+                        self.validation_dict[i][k] = vals.cpu().float().numpy()
+            else:
+                vals = T.stack(j)
+                if vals.dtype == T.bool:
+                    self.validation_dict[i] = vals.cpu().numpy()
+                else:
+                    self.validation_dict[i] = vals.cpu().float().numpy()
+        
+        if (self.eval_fw is not None):
+            log_vals = self.eval_fw(**self.validation_dict)
     
-    def wandb_log(self):
-        self.wandb.log(self.log)
-        self.log={i:[] for i in self.log_columns}
-    
+            # log images
+            if self.logger is not None:
+                self.logger.experiment.log(log_vals, commit=False)
+                
+            # log additional values
+            # for i,j in log_vals.items():
+            #     self.log(f"valid/{i}", j, prog_bar=True)
+        
+        # # evaluate side task
+        # for task in self.tasks:
+        #     logs = task.get_eval()
+        #     for name, vals in logs.items():
+        #         self.log(f"valid/task/{task.name}_{name}", vals, prog_bar=True)
+
+        # free memory
+        self.init_val_log()
+        # pass
+
     def generate_samples(self, initial_noise, disable_bar=True):
 
         generated_data={}
+        
+        # if isinstance(initial_noise, dict):
+        #     initial_noise = DataLoader(DictDataset(initial_noise),
+        #                                batch_size=256, shuffle=False)
 
-        for sample in tqdm(initial_noise, total=len(initial_noise),
-                            disable=disable_bar # len(self.initial_noise)==1
+        for sample in tqdm(initial_noise, disable=disable_bar # len(self.initial_noise)==1
                             ):
-
             # sample = {i:j.to(self.device) for i,j in sample.items()}
+            
+            # if 'noise' not in sample:
+            #     cnts = sample.pop('cnts')
+            # if 'scalar' not in sample:
+            #     sample['ctxt'] = sample.pop('scalars')
+
+            # sample['noise'] = T.randn(cnts.shape).to(cnts)
+            sample['noise'] = sample.pop('inpt')
+            
+            sample = push_to_device(sample, self.device)
 
             _generated = self.generate(**sample)
 
+            _generated = push_to_device(_generated, 'cpu')
+            
             # concat to generated_data
             for i,j in _generated.items():
                 if isinstance(j, dict): # for dict nested ctxt
@@ -226,116 +255,125 @@ class DiffusionModel(
 
         return generated_data
 
-    def run_evaluate(self, test_loader, epoch_nr=0, disable_bar=False):
-
-        # plot random generated images for visual evaluation of generation quality
-        if (not epoch_nr%self.eval_cfg.eval_iters) & False:# & (epoch_nr>0):
-
-            # generate sample
-            generated_data = self.generate_samples(self.initial_noise,
-                                                   disable_bar=disable_bar)
-
-            # evaluate in framework and log
-            if self.eval_fw is not None:
-                log = self.eval_fw(**generated_data, name="generated_images", n_epoch=epoch_nr)
-                self.log.update(log)
-
-        # validate training scores
-        if (test_loader is not None) & (self.wandb is not None):
-            noise_loss = {i.replace("_valid", ""):[] for i in self.log.keys()
-                          if "valid" in i}
-            # run over training samples
-            for sample in tqdm(test_loader, disable=True):
-
-                # sample = {i: j.to(self.device) for i,j in sample.items()}
-                with T.no_grad():
-                    log_ep = self._shared_step(**sample, training=False)
-                for i,j in log_ep.items():
-                    noise_loss[i].append(j.cpu().detach().numpy())
-
-            for i,j in noise_loss.items():
-                if len(j)>0:
-                    self.log[f"{i}_valid"] = np.mean(j)
-
-    def train_step(self, images, ctxt=None, mask=None):
-        # normalize images to have standard deviation of 1, like the noises
-        self.optimizer.zero_grad(set_to_none=True)
-            
-        # loss function
-        log = self._shared_step(images, ctxt, mask)
-
-        # apply gradients
-        # apply gradients w/wo mp
-        if self.loss_scaler is not None:
-            self.loss_scaler.scale(log["noise_loss"]).backward()
-            # Unscales the gradients of optimizer's assigned params in-place
-            self.loss_scaler.unscale_(self.optimizer)
-
-            # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
-            clip_gradient = T.nn.utils.clip_grad_norm_(self.network.parameters(), 10, error_if_nonfinite=False)
-            if (not clip_gradient.isnan()) & (not clip_gradient.abs().isinf()):
-                log["clip"] = clip_gradient
-            # optimizer's gradients are already unscaled, so scaler.step does not unscale them,
-            # although it still skips optimizer.step() if the gradients contain infs or NaNs.
-            self.loss_scaler.step(self.optimizer)
-            self.loss_scaler.update()
+    def generate(self, noise,  ctxt=None, mask=None, n_steps:int=None):
+        if self.ema_sampler_val is not None and self.use_ema_in_eval:
+            return self.ema_sampling_network.generate(noise=noise, ctxt=ctxt, mask=mask,
+                                                      n_steps=n_steps)
         else:
-            log["noise_loss"].backward()
-            self.optimizer.step()
-            
-        self.lr_scheduler.step()
+            return self.sampling_network.generate(noise=noise, ctxt=ctxt, mask=mask,
+                                                  n_steps=n_steps)
 
-        # track the exponential moving averages of weights
-        with T.no_grad():
-            self.ema_network.ema(self.network.state_dict(),self.train_cfg.ema)
 
-        return {i:j.cpu().detach().numpy() for i,j in log.items()}
-                
-    def run_training(self):
+class Classifier(L.LightningModule):
+    def __init__(self, network:partial, train_config:dict, eval_fw: Callable=None,  save_path=None, **kwargs):
+        """
+        should get an
+        embedding network
+        sampling network with solver
+        evaluate framework
+        """
+        super().__init__()
+        self.save_hyperparameters()
+
+        self.train_config = train_config
+        self.save_path=save_path
+        self.eval_fw = eval_fw
+        self.precision = kwargs.get("precision", 32)
+        self.ctp={}
         
-        #progress bar for training
-        starting_epoch = self.wandb.summary.get("_step", 0)
+        # init loss function
+        self.loss = nn.BCEWithLogitsLoss()
+        # self.loss = nn.BCEWithLogitsLoss(pos_weight=T.tensor(5))
         
-        starting_epoch+= 1 if self.resume_run else 0
 
-        # init progress bar
-        pbar = tqdm(range(starting_epoch, self.train_cfg.num_epochs))
+        self.network = network
+            
+        # count parameters
+        self.ctp["Classifier size"] = count_trainable_parameters(self.network)
+        self.init_val_log()
 
-        for ep in pbar:
+    def init_val_log(self):
+        # setup validation step 
+        self.validation_dict = {i: [] for i in ["ctxt", "gen_data", 
+                                                "truth", "mask", "scalars"]}
+        self.validation_dict['ctxt'] = {i: [] for i in ["mask", "scalars", 'cnts']}
 
-            if self.run_eval:
-                # run evaluation
-                self.run_evaluate(self.test_loader, ep)
+    def configure_optimizers(self):
+        "configure optimizer and scheduler. If scheduler is not in train_config, it will be None."
 
-            # run over training samples
-            for nr, sample in enumerate(self.train_loader):
+        # optimzer for sampling network and tasks (should be detached from embedding)
+        opt_samp = {"optimizer": T.optim.AdamW(self.parameters(), **self.train_config["opt_cfg"])}
 
-                log_ep = self.train_step(**sample)
-                self.n_train_size+=len(sample["images"])
+        # optimzer for embedding network
+        if "lr_scheduler" in self.train_config:
+            # config for scheduler if needed 
+            opt_samp["lr_scheduler"] = schedulers.get_scheduler(optimizer=opt_samp["optimizer"],**self.train_config.lr_scheduler)
+                                                                   
+        return opt_samp
                 
-                for key, items in log_ep.items():
-                    # if np.isnan(items):
-                    #     raise ValueError("is NaN")
-                    self.log[key+"_train"].append(items)
+    def _shared_step(self, batch, batch_idx, log_name:str="train") -> Tuple[T.Tensor, T.Tensor, T.Tensor | None]:
 
-            self.log["n_samples"] = self.n_train_size
-            
-            # input logging
-            for key in log_ep:
-                self.log[key+"_train"] = np.mean(self.log[key+"_train"])
+        # get task loss on ema networks
+        if 'ctxt' in batch:
+            batch["ctxt"].pop("labels", None)
+        
+        # run sampling model
+        ctxt = batch.pop('ctxt')
+        output = self.network(**ctxt)
+        
+        labels = T.concat(
+            [
+                batch['mask']*1.0,
+                T.zeros((len(batch['inpt']), ctxt['mask'].size()[-1]-batch['mask'].size()[-1]),device=self.device)],1
+            )
 
-            self.log["lr"] = self.optimizer.state_dict()["param_groups"][0]["lr"]
-            
-            if self.run_eval & (self.log["noise_loss_valid"]<self.noise_loss_best):
-                # save model
-                self.save(f"{self.save_path}/states/diffusion_{ep}.pth")
+        # loss = self.loss(output[ctxt['mask']], labels[ctxt['mask']])
+        loss = T.nn.functional.binary_cross_entropy_with_logits(output, labels, weight=ctxt['mask']*1)
+        
+        acc = T.sum(
+            (output[ctxt['mask']]>0) == labels[ctxt['mask']].bool()
+            )/ctxt['mask'].sum()
+        
+        # calculate AUC
+        auc = roc_auc_score(
+            labels[ctxt['mask']].cpu().detach().numpy(), 
+            T.sigmoid(output[ctxt['mask']]).cpu().detach().numpy())
+        
+        # log diffusion loss
+        self.log(f"{log_name}/loss", loss, prog_bar=True)
 
-                # log validation loss
-                self.noise_loss_best = self.log["noise_loss_valid"]
+        self.log(f"{log_name}/accuracy", acc, prog_bar=True)
 
-            # log epoch
-            self.log["epoch"] = ep
+        self.log(f"{log_name}/auc", auc, prog_bar=True)
+        
+        return loss
 
-            if self.wandb is not None:
-                self.wandb_log()
+    def training_step(self, batch, batch_idx) -> T.Tensor:
+        return self._shared_step(batch, batch_idx, log_name="train")
+    
+    def on_train_epoch_start(self, *args, **kwargs) -> None:
+        pass
 
+    def on_train_batch_end(self, *args, **kwargs) -> None:
+        """update ema with new parameters"""
+        if self.lr_schedulers is not None:
+            if isinstance(self.lr_schedulers(), list):
+                for i in self.lr_schedulers():
+                    i.step()
+            else:
+                self.lr_schedulers().step() 
+
+    def validation_step(self, batch:dict, batch_idx:int):
+        "run validation batches and log results"
+                
+        # get val loss
+        loss = self._shared_step(batch=copy.deepcopy(batch),
+                                 batch_idx=batch_idx, log_name="valid")
+
+        return loss
+
+    def on_validation_epoch_end(self):
+        """log validation results over all valid batches"""
+        # free memory
+        self.init_val_log()
+        

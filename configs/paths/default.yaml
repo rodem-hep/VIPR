@@ -1,0 +1,11 @@
+# output dir will be created by hydra
+data_dir: /srv/fast/share/rodem/
+# output_dir: /home/users/a/algren/scratch/trained_networks/
+output_dir: /srv/beegfs/scratch/groups/rodem/${project_name}/${wandb.mode}/
+
+# Interpolated
+root_dir: ${oc.env:PROJECT_ROOT}
+full_path: ${paths.output_dir}/${project_name}/
+name: ${network_name}_${data.name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+
+save_path: ${paths.full_path}/${paths.name}

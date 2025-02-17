@@ -9,11 +9,3 @@ data:
   loader_config:
     batch_size: 512
     num_workers: 8
-
-
-# model:
-  # num_layers: 4
-  # defaults:
-  # - override architectures@encoder_cfg: perceiver_cfg.yaml
-  # - override architectures@decoder_cfg: perceiver_cfg.yaml
-  # - architectures@ctxt_encoder_cfg: perceiver_cfg.yaml

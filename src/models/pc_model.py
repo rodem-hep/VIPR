@@ -1,6 +1,7 @@
 "Transformers"
 import math
-from typing import Union
+from typing import Union, Callable
+from functools import partial
 import torch as T
 import torch.nn as nn
 import hydra
@@ -9,15 +10,18 @@ import numpy as np
 from omegaconf import OmegaConf
 
 # internal 
-from tools import misc
-import tools
-from tools.transformers.transformer import (TransformerDecoder, Perceiver, DenseNetwork)
-import src.positional_encoding as pe
+from tools.tools.transformers.transformer import DenseNetwork
+from tools.tools import diffusion_schemes as ds
+from tools.tools.modules import IterativeNormLayer
 
-class PCDiffusion(nn.Module):
-    def __init__(self, vkq_dims, ctxt_dims:Union[int, dict]=None, num_layers:int =1,
+
+class PCDiffusion(
+    ds.RectifiedFlows
+):
+    def __init__(self, vkq_dims, time_embedding: partial, 
+                 ctxt_dims:Union[int, dict]=None, num_layers:int =1,
                  decoder_cfg:dict=None, encoder_cfg:dict=None, ctxt_encoder_cfg:dict=None, dense_cfg:dict=None,
-                 upscale_dims:int=64, embedding_cfg=None, skip_cnt:bool =False,
+                 upscale_dims:int=64, skip_cnt:bool =False,
                  device:str="cuda", **kwargs):
         super().__init__()
         self.vkq_dims = vkq_dims
@@ -29,19 +33,26 @@ class PCDiffusion(nn.Module):
         self.device = device
         self.skip_cnt=skip_cnt
         self.dense_cfg=dense_cfg if dense_cfg!=None else {}
-        self.embedding_cfg = embedding_cfg
-        self.embedding_dims = embedding_cfg.embedding_dims if self.embedding_cfg is not None else 0
+        self.time_embedding = time_embedding
         self.num_layers = num_layers
-
+        self.loss=kwargs.get('loss', nn.MSELoss())
+        self.eval_cfg = kwargs.get('eval_cfg', {'eval_iters': 10,
+                                                'n_diffusion_steps': 20})
+        
         self.ctxt_encoder_layers = nn.ModuleList([])
         self.inpt_encoder_layers = nn.ModuleList([])
         self.decoder_layers = nn.ModuleList([])
         self.decoder_layers = nn.ModuleList([])
         self.init_conv_ctxt = None
+        
 
         self.get_network()
 
     def get_network(self) -> None:
+        # input norm
+        self.inpt_normaliser = IterativeNormLayer((1,self.vkq_dims), max_iters=10_000)
+        
+        
         # init cnts
         self.init_dense = DenseNetwork(self.vkq_dims+self.upscale_dims,
                                        self.upscale_dims, **self.dense_cfg)
@@ -49,12 +60,20 @@ class PCDiffusion(nn.Module):
         # ctxt cnts
         if "cnts" in self.ctxt_dims:
             self.init_conv_ctxt = DenseNetwork(
-                self.ctxt_dims["cnts"][-1]+self.upscale_dims,
+                self.ctxt_dims["cnts"]+self.upscale_dims,
                 self.upscale_dims,**self.dense_cfg)
+
+        self.full_ctxt_dims = self.ctxt_dims.get('scalars', 0)+self.time_embedding.embedding_dims
         
+        # init time embedding
+        self.time_embedding = T.nn.Sequential(
+            self.time_embedding,
+            DenseNetwork(in_features=self.time_embedding.embedding_dims, out_features=self.time_embedding.embedding_dims,**self.dense_cfg)
+            )
+
         # ctxt scalar
-        if ("scalars" in self.ctxt_dims) or (self.embedding_dims>0):
-            self.full_ctxt_dims = self.ctxt_dims.get("scalars", 0)+self.embedding_dims
+        if self.full_ctxt_dims > 0:
+
             self.init_scalars_ctxt = DenseNetwork(self.full_ctxt_dims,
                                                   self.upscale_dims,**self.dense_cfg)
 
@@ -92,6 +111,7 @@ class PCDiffusion(nn.Module):
         if self.skip_cnt:
             self.last_mlp  = DenseNetwork(self.vkq_dims+self.upscale_dims, self.vkq_dims,
                                         zeroed=self.skip_cnt, **self.dense_cfg)
+        
 
     @T.no_grad()
     def ema(self, state_dict, ema_ratio):
@@ -105,25 +125,41 @@ class PCDiffusion(nn.Module):
     def count_trainable_parameters(self):
         sum_trainable = np.sum([i.numel() for i in self.parameters() if i.requires_grad])
         return sum_trainable
+    
+    def generate(self, noise:T.Tensor, ctxt=None, mask=None, n_steps=None):
+        # noise -> images -> denormalized images
         
+        with T.no_grad():
+            generated_images = self.reverse_diffusion(noise=noise, ctxt=ctxt, mask=mask,
+                                                      n_steps=n_steps)
+
+        generated_images = self.inpt_normaliser.reverse(generated_images, mask=mask).cpu()
+
+        # create output dict
+        gen_data = {"gen_data": generated_images}
+        if ctxt is not None:
+            gen_data["ctxt"] = ctxt
+        if mask is not None:
+            gen_data["mask"] = mask
+
+        return gen_data
             
-    def forward(self, input_vkq: T.Tensor, mask:T.Tensor=None, ctxt:T.Tensor=None) -> T.Tensor:
+    def forward(self, input_vkq: T.Tensor, mask:T.Tensor, latn:T.Tensor, time:T.Tensor) -> T.Tensor:
         input_vkq= input_vkq.to(self.device)
         input_vkq_original= input_vkq.clone()
         
-        if mask is not None:
-            mask= mask.to(self.device)
-        if ctxt is None:
-            ctxt={}
+        mask= mask.to(self.device)
+
             
         # add noise_timestamp to ctxt
-        if "scalars" in ctxt:
-            ctxt_scalars = self.init_scalars_ctxt(ctxt["scalars"].to(self.device))
+        if "scalars" in latn:
+            ctxt_scalars = T.concat([latn["scalars"], time], -1)
+            ctxt_scalars = self.init_scalars_ctxt(ctxt_scalars.to(self.device))
 
         #ctxt cnts
-        if "cnts" in ctxt:
-            ctxt_cnts = ctxt["cnts"].clone().to(self.device)
-            ctxt_mask = ctxt["mask"].to(self.device)
+        if "cnts" in latn:
+            ctxt_cnts = latn["cnts"].clone().to(self.device)
+            ctxt_mask = latn["mask"].to(self.device)
             input_ctxt = self.init_conv_ctxt(ctxt_cnts, ctxt_scalars)
             # clone the cnts ctxt for perceiver
             input_ctxt_clone = input_ctxt.clone()
@@ -158,6 +194,7 @@ class PCDiffusion(nn.Module):
             if len(self.decoder_layers)>0:
                 input_vkq = self.decoder_layers[i](input_vkq, input_ctxt,
                                                     mask_vk=ctxt_mask,
+                                                    mask_q = mask,
                                                     ctxt=ctxt_scalars)
 
         # last SA
@@ -170,3 +207,8 @@ class PCDiffusion(nn.Module):
             return self.last_mlp(input_vkq_original+output, ctxt_scalars)
         else:
             return output
+    
+    def train_step(self, inpt:T.Tensor, ctxt:T.Tensor=None,
+                     mask:T.Tensor=None, training:bool=True
+                     ):
+        return self._train_step(inpt, ctxt, mask, training)

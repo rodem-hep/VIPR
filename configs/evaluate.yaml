@@ -7,52 +7,99 @@ jet_sub_vars : ["tau_21", "tau_32", "d12", "d23", "d2", "mass", "pt"]
 
 
 # glob settings
-generate_substructure: True
+generate_substructure: False
 n_post_to_gen: 1 # >1 generate posterior
 combine_ctxt_size: 1
 csv_sample_to_load: single #posterior_${eval.size} #single 
 plot_images: True
-save_figures: False
+save_figures: True
 softdrop_path: /srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/
+predict_str: eval_VIPR
+
+# general settings
+size: 100_000 # 100_000 / 2000
+device: cuda
+format: ".pdf"
+
+loader_config:
+  batch_size: 256
+  num_workers: 4
+
+data_cfg: 
+  pileup_dist_args:
+    mu: 200 # 50, 60, 70, 80, 90, 100, 150, 200, 250, 300
+    std: 50 # 50 or 0 
 
 # how to run eval fw
-eval:
+eval_clf:
+  _target_: run.plot_eval.EvaluatePhysics
+
+  path_to_model: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/PUPPIML_top_jets_pileup_jet_2024_12_09_22_33_30_673870 #wo dp
+
+  # path_to_model: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/PUPPIML_top_jets_w_drop_pileup_jet_2025_01_13_09_57_05_749162 # with dp 10%
+
+  path_lst:
+    N(200, 50): ${..path_to_model}
+
+  size: ${..size}
+  device: ${..device}
+  format: ${..format}
+
+  data_cfg: ${..data_cfg}
+  probs_cut: 0.3
+
+  loader_config: ${..loader_config}
+
+eval_VIPR_dp:
+  _target_: run.plot_eval.EvaluatePhysics
+  flow_path: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/p_N_flow_w_10_drop_pileup_jet_2025_01_22_14_15_16_223112 # N(200, 10) correct normalization dp proba
+  run_flow: True
+
+  path_to_model: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/VIPR_top_jets_w_drop_pileup_jet_2025_01_10_15_40_18_574439 # N(200, 10) correct normalization with drop probability 10%
+
+  size: ${..size}
+  device: ${..device}
+  format: ${..format}
+
+  data_cfg: ${..data_cfg}
+  loader_config: ${..loader_config}
+  
+  eval_cfg:
+    n_diffusion_steps: 100
+
+eval_VIPR:
   _target_: run.plot_eval.EvaluatePhysics
   flow_path: jet_flow_2024_03_11_13_29_10_850955 # N(200, 10) correct normalization
   run_flow: True
 
   path_to_model: ${glob_path}/online/jet_2024_02_12_15_29_33_272016 # N(200, 10) correct normalization
-  # path_to_model: ${glob_path}/online/jet_2024_02_17_14_17_07_224394 # N(60, 10) correct normalization
-
+  
   path_lst:
     N(200, 50): ${glob_path}/online/jet_2024_02_12_15_29_33_272016 # N(200, 10) correct normalization
     N(60, 10):  ${glob_path}/online/jet_2024_02_17_14_17_07_224394 # N(60, 10) correct normalization
 
-  size: 100_000 # 100_000 / 2000
-  device: cpu
-  format: ".pdf"
+  size: ${..size}
+  device: ${..device}
+  format: ${..format}
 
-  data_cfg: 
-    pileup_dist_args:
-      mu: 200 # 50, 60, 70, 80, 90, 100, 150, 200, 250, 300
-      std: 50 # 50 or 0 
-
-
-  loader_config:
-    batch_size: 512
-    num_workers: 4
+  data_cfg: ${..data_cfg}
+  loader_config: ${..loader_config}
   
   eval_cfg:
     n_diffusion_steps: 100
-
 
 # plot settings
 hist_kwargs:
   style:
     bins: 35
-  percentile_lst: [0.1, 99]
+  percentile_lst: [0.08, 99.2]
   dist_styles:
-    - label: Top
+    - label: Obs.
+      color: red
+      ls: 'solid'
+      lw: 2
+
+    - label: Ground truth
       color: black
       lw: 2
 
@@ -61,13 +108,14 @@ hist_kwargs:
       ls: 'dashed'
       lw: 2
 
-    - label: Obs.
-      color: red
-      ls: 'dotted'
-      lw: 2
 
     # - label: Vipr
     #   color: blue
+
+    - label: 'PuppiML'
+      color: orange
+      ls: dotted
+      lw: 2
 
     - label: 'VIPR'
       color: blue
@@ -76,8 +124,9 @@ hist_kwargs:
 
 ratio_kwargs:
   styles: 
+    - color: red
     - color: black
     - color: green
-    - color: red
-    # - color: blue
+    - color: orange
     - color: blue
+  truth_key: dist_1

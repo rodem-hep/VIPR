@@ -17,13 +17,14 @@ import pandas as pd
 from run.plot_eval import get_pileup_name
 
 # internal
-import tools.physics.jet_substructure as sjets
-from tools.datamodule.prepare_data import matrix_to_point_cloud
+import tools.tools.physics.jet_substructure as sjets
+from tools.tools.datamodule.prepare_data import matrix_to_point_cloud
 
 @hydra.main(version_base=None, config_path=str(root / "configs"), config_name="evaluate")
 def main(config):
-    eval_fw = hydra.utils.instantiate(config.eval)
-    # '/srv/beegfs/scratch/groups/rodem/datasets/RODEMJetTagging/train/ttbar'
+
+    eval_fw = hydra.utils.instantiate(config[config.predict_str])
+
     name = get_pileup_name(eval_fw.data.pileup_dist_args)
 
     # pileup naming
@@ -32,38 +33,62 @@ def main(config):
         name = "_pileup_"+"_".join([f"{i}_{j}" for i,j in eval_fw.data.pileup_dist_args.items()])
         logging.info(f"Evaluating pileup with {name}")
         
-    size = config.eval.size
-
+    # size = config.size
+    size = 9999*config.size//10_000
+    
     # full name
-    full_name = f"{config.csv_sample_to_load}{name}" #_size_{size}"
+    full_name = f"{config.csv_sample_to_load}{name}_size_{size}"
+    
+    probs_cut = config[config.predict_str].get('probs_cut')
+    if probs_cut is not None:
+        full_name = f'{full_name}_probs_cut_{str(probs_cut).replace(".", "_")}'
+        
+    logging.info(f"Saving name: {full_name}")
+    logging.info(f"Running this config: {config[config.predict_str]}")
+    
+    logging.info(f"Get eval files")
+    path_obs=config.obs_jets_path
+    
+    path_top='/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/top_jets/'
+    
+    if eval_fw.data.drop_probability>0:
+        path_obs += f"drop_prob_{eval_fw.data.drop_probability}/"
+        path_top += f"drop_prob_{eval_fw.data.drop_probability}/"
+        os.makedirs(path_obs, exist_ok=True)
+        os.makedirs(path_top, exist_ok=True)
 
     if False: # create data sample of obs jet and regular jet
         logging.info("Generating obs jet")
         eval_ctxt, eval_truth = eval_fw.data.get_normed_ctxt(return_truth=True)
+
+        logging.info("Normalised the pc")
         eval_ctxt["cnts"] = eval_fw.data.relative_pos(eval_ctxt["cnts"],
                                                 jet_vars=eval_ctxt["scalars"][:, :3],
                                                 mask=eval_ctxt["mask"],
                                                 reverse=True)
-        eval_truth["images"] = eval_fw.data.relative_pos(eval_truth["images"],
+        eval_truth["inpt"] = eval_fw.data.relative_pos(eval_truth["inpt"],
                                                 jet_vars=eval_truth["scalars"][:, :3],
                                                 mask=eval_truth["mask"],
                                                 reverse=True)
 
+        logging.info("Save the generated pc")
         date_str=f"_{datetime.today():%m_%d_%Y_%H_%M_%S}"
+        
 
         # Write dictionary to json file
         size = len(eval_ctxt["cnts"])
-        np.save(f'/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/obs_jets/obs_jet{name}_size_{size}{date_str}.npy', eval_ctxt)
+        np.save(f'{path_obs}/obs_jet{name}_size_{size}{date_str}.npy', eval_ctxt)
 
         # Write dictionary to json file
-        np.save(f'/srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/top_jets/top_jet_size_{size}{date_str}.npy', eval_truth)
+        np.save(f'{path_top}top_jet_size_{size}{date_str}.npy', eval_truth)
 
     elif config.generate_substructure: # generate substructure
         logging.info("Calculate substructures for obs jet")
         obs_jet_file_name = f"{config.obs_jets_path}/jet_subs/jet_substructure_ctxt_{full_name}.h5"
         
         if ("single" in config.csv_sample_to_load
-            and not os.path.isfile(obs_jet_file_name)): # substruct for obs. jet
+            and not os.path.isfile(obs_jet_file_name) and 'probs' not in full_name 
+            and False): # substruct for obs. jet
             os.makedirs(f"{config.obs_jets_path}/jet_subs/",
                         exist_ok=True)
             
@@ -93,7 +118,6 @@ def main(config):
         #     eval_fw.eval_folder+="/post/"
 
         # get size 
-        size = 9999*config.eval.size//10_000
         # size = "99990_2000" # TODO fix this
 
         # truth_jets = gen_data[f"truth_jets_{config.csv_sample_to_load}"]
@@ -104,11 +128,11 @@ def main(config):
             # TODO need to add indexing
             gen_cnts = gen_cnts[["eta", "phi", "pt", "eventNumber"]].values
 
-        # eventNumber = gen_cnts[:, -1]
-        # gen_cnts = gen_cnts[:,:4]
-
+        if len(gen_cnts.shape)>4:
+            raise ValueError("The shape of the generated cnts is not correct - not sure of the column order")
+        
         # # create pc
-        gen_cnts, mask = matrix_to_point_cloud(gen_cnts, gen_cnts[:, -2],
+        gen_cnts, mask = matrix_to_point_cloud(gen_cnts, gen_cnts[:, -1],
                                             #   num_per_event_max=max_cnts
                                                 )
         if "eventNumber" not in gen_jets.columns:
@@ -133,6 +157,8 @@ def main(config):
                             )
             if "posterior" in config.csv_sample_to_load:
                 sys.exit()
+        else:
+            print(f"Already generated predicted substructure in {out_name}")
 
         truth_name = f"{save_path}/jet_substructure_truth_{full_name}.h5"
 
@@ -148,13 +174,13 @@ def main(config):
         print("Generated Top jets")
         
         ### generate sample ###
-        eval_fw.load_diffusion()
+        eval_fw.load_model()
 
         # will follow the pileup defined
-        if config.eval.flow_path is not None:
-            file_name = glob(f"{config.obs_jets_path}/flow_N/{config.eval.flow_path}/obs_jet*{name}*")
+        if eval_fw.flow_path is not None:
+            file_name = glob(f"{path_obs}/flow_N/{eval_fw.flow_name}/obs_jet*{name}*")
         else:
-            file_name = glob(f"{config.obs_jets_path}/obs_jet*{name}*")
+            file_name = glob(f"{path_obs}/obs_jet*{name}*")
         file_name = [i for i in file_name if "softdrop" not in i][0]
 
         eval_ctxt = np.load(file_name, allow_pickle=True).item()
@@ -167,19 +193,19 @@ def main(config):
             mask=eval_ctxt["mask"],
             reverse=False)
 
-        saving_name = f"{config.csv_sample_to_load}{name}_size_{len(eval_ctxt['cnts'])}"
-        print(f"Save path: {saving_name}")
+        
+        print(f"Save path: {full_name}")
         
         if ("flow_N" in eval_fw.eval_folder):
             eval_ctxt["true_n_cnts"] = np.int64(eval_ctxt["scalars"][:, -1])
         
-        if "posterior" in saving_name and config.n_post_to_gen==1:
+        if "posterior" in full_name and config.n_post_to_gen==1:
             raise ValueError("When generating posterior, n_post_to_gen should be larger than 1.")
 
         # it will save the generates pc
         eval_fw.generate_and_save_post(eval_ctxt, config.n_post_to_gen,
                                        combine_ctxt_size=config.combine_ctxt_size,
-                                       saving_name=saving_name)
+                                       saving_name=full_name)
 
 
 if __name__ == "__main__":

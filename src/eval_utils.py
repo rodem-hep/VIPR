@@ -8,8 +8,8 @@ from tqdm import tqdm
 
 #internal
 from src.utils import fig2img
-import tools.misc as misc
-from tools.visualization import general_plotting as plot
+import tools.tools.misc as misc
+from tools.tools.visualization import general_plotting as plot
 
 def get_percentile(gen_jet_vars, truth_jet_vars, columns, numpy_version=False):
     if numpy_version:
@@ -62,12 +62,13 @@ class EvaluateFramework:
             data_col = [d[:,nr] for d in args]
             
             # centering distribution
-            
-            if kwargs.get("sym_percentile", False):
-                percentile = np.percentile(data_col[0],
-                                           kwargs.get("sym_percentile", False))
+            if 'bins' not in hist_kwargs["style"]:
+                percentile = np.percentile(
+                    data_col[0],
+                    kwargs.get("percentile", [1,99])
+                    )
 
-                hist_kwargs["style"]["bins"] = np.linspace(-percentile,percentile,40)
+                hist_kwargs["style"]["range"] = percentile
 
             # plot ratio between distribution
             counts_dict, _ = plot.plot_hist(*data_col, ax=ax_1,
@@ -80,7 +81,9 @@ class EvaluateFramework:
 
             if (len(args)>1) and ratio_bool:
                 # plot ratio between distribution
-                plot.plot_ratio(counts_dict, truth_key="dist_0", ax=ax_2,
+                if 'truth_key' not in ratio_kwargs:
+                    ratio_kwargs['truth_key'] = "dist_0"
+                plot.plot_ratio(counts_dict, ax=ax_2,
                                 zero_line_unc=True,
                                 normalise=len(data_col[0])!=len(data_col[1]),
                                 ylim=[0.8, 1.2], **copy.deepcopy(ratio_kwargs))
@@ -88,10 +91,17 @@ class EvaluateFramework:
                 ax_2.set_xlabel(kwargs.get("xlabels", col_name)[nr])
             else:
                 ax_1.set_xlabel(kwargs.get("xlabels", col_name)[nr])
+            
+            ymax = np.max([counts_dict[i]['counts'][-1]/np.sum(counts_dict[i]['counts'][-1]) for i in counts_dict if "dist" in i])
+            
+            hist_ylim = kwargs.get("hist_ylim")
+            if hist_ylim is not None:
+                ax_1.set_ylim(0, ymax*hist_ylim)
                 
             if isinstance(log, dict):
                 log[f"{name}_hist"] =  wandb.Image(fig2img(fig))
                 plt.close(fig)
+
             if kwargs.get("save_path", None) is not None:
                 misc.save_fig(fig, f"{kwargs['save_path']}{name}_{self.format}")
 

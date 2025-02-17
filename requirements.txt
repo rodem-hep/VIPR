@@ -3,6 +3,7 @@ torchvision
 torchmetrics
 lightning
 nflows
+torchdiffeq
 
 # data science / plotting
 numpy

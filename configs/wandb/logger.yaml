@@ -4,8 +4,8 @@ wandb:
   offline: False
   id: null
   log_model: False
-  project: ${project}
-  name: ${name}
-  save_dir: ${save_path}
+  project: ${project_name}
+  name: ${network_name}
+  save_dir: ${paths.save_path}
   # resume: ${full_resume}
   # tags: ${tags}

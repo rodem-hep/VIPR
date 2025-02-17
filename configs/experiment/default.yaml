@@ -10,7 +10,7 @@ defaults:
 wandb:
   mode: online
 
-trainer:
-  eval_cfg:
-    eval_iters: 10
+# trainer:
+#   eval_cfg:
+#     eval_iters: 10
 

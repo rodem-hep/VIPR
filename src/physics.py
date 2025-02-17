@@ -15,14 +15,14 @@ import pandas as pd
 from torch.utils.data import Dataset,DataLoader
 
 
-from tools import misc
-import tools.visualization.general_plotting as plot
+from tools.tools import misc
+import tools.tools.visualization.general_plotting as plot
 from src.utils import undo_log_squash, log_squash
 from src.eval_utils import EvaluateFramework
-from tools.datamodule.prepare_data import fill_data_in_pc, matrix_to_point_cloud
-from tools.datamodule.pipeline import pc_2_image 
-from tools.datamodule.datamodule import MultiFileDataset, MultiStreamDataLoader, chunks
-from tools.transformations import log_squash, undo_log_squash
+from tools.tools.datamodule.prepare_data import fill_data_in_pc, matrix_to_point_cloud
+from tools.tools.datamodule.pipeline import pc_2_image 
+from tools.tools.datamodule.datamodule import MultiFileDataset, MultiStreamDataLoader, chunks
+from tools.tools.transformations import log_squash, undo_log_squash
 
 def rescale_phi(phi):
     phi[phi >= np.pi] -= 2*np.pi
@@ -127,6 +127,7 @@ class JetPhysics(EvaluateFramework, Dataset):
         self.loader_config = kwargs.get("loader_config", {})
         self.max_ctxt_cnstits = kwargs.get("max_ctxt_cnstits", 400)
         self.max_cnstits = kwargs.get("max_cnstits")
+        self.drop_probability = kwargs.get("drop_probability", -1)
         
         # change the eta phi of the obs jet in conds
         self.move_pileup_jet = kwargs.get("move_pileup_jet", True)
@@ -264,7 +265,7 @@ class JetPhysics(EvaluateFramework, Dataset):
         # TODO construct pileup with ttbar events
         data={}
         test_dataloader = self.test_dataloader()
-        for i in test_dataloader:
+        for i in tqdm(test_dataloader):
             
             # unpack size
             if "mask" in i:
@@ -289,7 +290,7 @@ class JetPhysics(EvaluateFramework, Dataset):
 
 
         if return_truth:
-            data_true = {"images": self.cnts_vars_rel, "mask": self.mask_cnts,
+            data_true = {"inpt": self.cnts_vars_rel, "mask": self.mask_cnts,
                          "true_n_cnts": self.jet_vars["n_cnts"].values,
                          "scalars": self.jet_vars[self.jet_scalars_cols[:4]].values}
 
@@ -354,6 +355,11 @@ class JetPhysics(EvaluateFramework, Dataset):
         full_event = self.relative_pos(full_event[None],new_jet_vars,
                                        mask=mask_events[None])
         
+        # randomly drop constituents
+        drop_mask = np.random.uniform(0,1,len(full_event[0]))<=self.drop_probability
+        full_event[0][drop_mask] = 0
+        mask_events[drop_mask]=False
+        
         return full_event[0], mask_events, new_jet_vars
 
     def get_ctxt_shape(self):
@@ -376,7 +382,7 @@ class JetPhysics(EvaluateFramework, Dataset):
         return pc_2_image(data, style_kwargs=self.image_style_kwargs)
 
     def _shape(self):
-        return {"images": [self.max_cnstits,
+        return {"inpt": [self.max_cnstits,
                            len(self.target_names)],
                 "ctxt_images": [self.max_ctxt_cnstits, 
                                 len(self.target_names)],
@@ -393,7 +399,7 @@ class JetPhysics(EvaluateFramework, Dataset):
 
     def __getitem__(self, idx):
         jet_var=None
-        data = {"images": None}
+        data = {"inpt": None}
         if self.pileup_cnts is not None: # & (self.n_pileup_to_select>0):
             data["ctxt"] = {}
             
@@ -412,13 +418,13 @@ class JetPhysics(EvaluateFramework, Dataset):
             if "pc" in self.datatype:
                 data["mask"] =  self.mask_cnts[idx]
                 # data["images"] = self.cnts_vars_rel[idx]
-                data["images"] = self.relative_pos(self.cnts_vars[idx][None],jet_var, mask=data["mask"][None])[0]
-                data["images"][~data["mask"]]=0
+                data['inpt'] = self.relative_pos(self.cnts_vars[idx][None],jet_var, mask=data["mask"][None])[0]
+                data['inpt'][~data["mask"]]=0
 
-                data["images"] = np.float32(data["images"])
+                data['inpt'] = np.float32(data['inpt'])
 
             elif self.datatype == "N":
-                data["images"] = np.array([np.float32(self.mask_cnts[idx].sum())])
+                data['inpt'] = np.array([np.float32(self.mask_cnts[idx].sum())])
 
             # insert cnts into ctxt
             data["ctxt"]["cnts"] = np.float32(event)
@@ -430,7 +436,7 @@ class JetPhysics(EvaluateFramework, Dataset):
                 self.cnts_vars[idx][None],self.jet_vars.iloc[idx:idx+1],
                 mask=self.mask_cnts[idx]
                 ) # TODO i think shape is wrong
-            data["images"] = np.float32(cnts_vars_rel)
+            data['inpt'] = np.float32(cnts_vars_rel)
             data["mask"] = self.mask_cnts[idx]
 
         # Get scalar ctxt vars
@@ -447,10 +453,13 @@ class JetPhysics(EvaluateFramework, Dataset):
             data["ctxt"]["scalars"] = np.float32(
                 np.ravel(jet_var[self.jet_scalars_cols])
                 )
+
+            if 'n_cnts' in self.jet_scalars_cols:
+                data['ctxt']['scalars'][-1] = np.sum(data['ctxt']['mask'],len(data['ctxt']['mask'].shape)-1)
         
         # convert to image
         if "image" in self.datatype:
-            data["images"] = self.pc_2_image(data["images"])[None]
+            data['inpt'] = self.pc_2_image(data['inpt'])[None]
             data.pop("mask")
             if "cnts" in data["ctxt"]:
                 data["ctxt"]["cnts"] = self.pc_2_image(data["ctxt"]["cnts"])[None]
@@ -532,7 +541,7 @@ class JetPhysics(EvaluateFramework, Dataset):
         # create & upload ctxt & truth
         if kwargs.get("n_epoch", 0)==0:
             ctxt_cnts = self.relative_pos(ctxt["cnts"], ctxt_scalars, mask=ctxt["mask"]==1,
-                                          reverse=True).numpy()
+                                          reverse=True)
             truth_images = np.clip(np.log(pc_2_image(self.cnts_vars[:100], mask=self.mask_cnts[:100], style_kwargs=style)+1), 0,1)
             ctxt_images = np.clip(np.log(pc_2_image(ctxt_cnts[:100], mask=ctxt["mask"][:100]==1, style_kwargs=style)+1), 0, 1)
             log.update(self.plot_images(truth_images[..., None], name="truth_image"))
@@ -672,7 +681,7 @@ class MultiJetFiles(MultiStreamDataLoader):
                                   **self.jet_physics_cfg)
         
         # calculate number of batches. There are 9999 events in each file
-        self.n_batches = sum([len(i) for i in split_data_lst])*9999//loader_config["batch_size"]
+        self.n_batches = sum([len(i) for i in split_data_lst])*9999//self.loader_config["batch_size"]//2
         loader_config["num_workers"] = 1
 
         super().__init__(datasets=datasets, data_kw=loader_config)

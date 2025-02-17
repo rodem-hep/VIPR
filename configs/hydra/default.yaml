@@ -8,5 +8,5 @@ job:
 
 # Interpolated variables output directory, generated dynamically on each run
 run:
-  dir: ${save_path}
+  dir: ${paths.save_path}
 

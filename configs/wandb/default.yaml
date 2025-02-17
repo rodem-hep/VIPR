@@ -1,9 +1,14 @@
-project: ${..trainer.init_noise.datatype}-${..data.data_name}-diffusion
-
+_target_: pytorch_lightning.loggers.wandb.WandbLogger
 entity: malteal
-
-mode: offline # online offline
-
-name: ${data.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
-
-group: n_cnts_${data.train.jet_physics_cfg.max_cnstits}
+offline: True
+id: null
+log_model: False
+project: pc-jet-diffusion
+name: ${paths.name}
+save_dir: ${paths.save_path}
+tags:
+  - ${data.name}
+  - ${network_name}
+  - VIPR
+  - top_jet
+  - RectifiedFlows 

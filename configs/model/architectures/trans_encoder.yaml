@@ -1,9 +1,9 @@
-_target_: tools.transformers.transformer.TransformerEncoder
+_target_: tools.tools.transformers.transformer.TransformerEncoder
 _partial_: true
-model_dim: ${..upscale_dims}
-dense_cfg: ${..dense_cfg}
+model_dim: ${model.network.upscale_dims}
+dense_cfg: ${model.network.dense_cfg}
 num_layers: 1
 mha_config: 
-  attn_heads: ${model.attn_heads}
-ctxt_dim: ${..upscale_dims}
+  attn_heads: 8
+ctxt_dim: ${model.network.upscale_dims}
 out_norm: False

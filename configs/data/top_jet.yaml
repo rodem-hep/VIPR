@@ -1,5 +1,5 @@
 
-data_name: jet
+name: pileup_jet
 datatype: pc
 
 train:
@@ -19,9 +19,10 @@ train:
     jet_scalars_cols: ["eta", "phi", "pt", "mass", "mu", "n_cnts"]
     # if the pileup path in defined - it will use pileup path
     pileup_path: ["/srv/beegfs/scratch/users/a/algren/diffusion/pileup/pileup.csv", ]
+    drop_probability: 0.1
     pileup_dist_args:
-      mu: 60
-      std: 10
+      mu: 200
+      std: 50
 
 valid:
   _target_: src.physics.JetPhysics

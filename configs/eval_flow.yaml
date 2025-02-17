@@ -6,19 +6,23 @@ glob_path: /srv/beegfs/scratch/users/a/algren/trained_networks/diffusion/
 data_path: /srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/obs_jets/
 
 # save new N_cnts
-save_new_N_cnts: False
+save_new_N_cnts: True
 save_figures: False
 
 pileup_cfg: 
   mu: 200
-  std: 50
+  std: 0
 
 path_lst:
   # N(200, 50) minmax: ${glob_path}/flow/jet_flow_2024_03_09_04_03_14_320468 # N(200, 10) correct normalization
   # N(200, 50) standard: ${glob_path}/flow/jet_flow_2024_03_11_13_29_10_850955 # N(200, 10) correct normalization
   # N(200, 50) large: ${glob_path}/flow/jet_flow_2024_03_11_15_36_07_755850 # N(200, 10) correct normalization
   # N(200, 50) large: ${glob_path}/flow/jet_flow_2024_03_12_20_31_10_365986 # N(200, 10) correct normalization
-  N(200, 50) large: ${glob_path}/flow/jet_flow_2024_03_13_14_52_21_335484 # N(200, 10) correct normalization
+
+  # used
+  # N(200, 50) large: ${glob_path}/flow/jet_flow_2024_03_13_14_52_21_335484 # N(200, 10) correct normalization
+  # N(200, 50) large: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/p_N_flow_w_10_drop_pileup_jet_2025_01_20_16_57_56_529830 # N(200, 10) correct normalization dp proba
+  N(200, 50) large: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/p_N_flow_w_10_drop_pileup_jet_2025_01_22_14_15_16_223112 # N(200, 10) correct normalization dp proba
 
 
 dist_styles:

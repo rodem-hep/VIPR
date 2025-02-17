@@ -1,10 +1,12 @@
 # @package _global_
 
 defaults:
+  - paths: default.yaml
+
   - _self_
 
   # model
-  - trainer: default.yaml
+  # - trainer: default.yaml
   - data: default.yaml
   - model: flow.yaml
   - eval: default.yaml
@@ -15,13 +17,28 @@ defaults:
   - wandb: logger.yaml
   - experiment: run_flow.yaml
 
-path: /srv/beegfs/scratch/users/a/algren/trained_networks/diffusion/flow/
-
-save_path: ${path}/${name}
-
-project: p_N_flow
-name: ${data.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
+project_name: VIPR
+network_name: p_N_flow_w_10_drop_${data.name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
 # resume: ${full_resume}
 # tags: ${tags}
 
 device: cuda
+
+paths:
+  name: ${network_name}
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+
+  max_epochs: 100
+  enable_progress_bar: True
+  accelerator: gpu
+  devices: auto
+  gradient_clip_val: 10.0
+  precision: "16-mixed"
+  val_check_interval : 2000
+  num_sanity_val_steps: 2
+
+  # Interpolated
+  default_root_dir: ${paths.save_path}
+

@@ -1,0 +1,44 @@
+_target_: src.diffusion.Classifier
+# _convert_: object
+
+defaults:
+  - architectures@network.encoder_cfg: trans_encoder.yaml
+  - _self_
+
+train_config:
+  opt_cfg:
+    lr: 1e-4 # 0.0005
+    weight_decay: 0.05
+
+  lr_scheduler: 
+    sch_type: "OneCycleLR"
+    attr:
+      total_steps: 100_000
+      max_lr: 1e-4
+
+
+network: 
+  _target_: src.models.pc_classifier.PCClassifier
+
+  device: ${device}
+  
+  # input dims
+  vkq_dims: 3
+  output_dims: 1
+
+  ctxt_dims: 6
+  ctxt_upscale_dims: 32
+  upscale_dims: 256
+  num_layers: 6
+  attn_heads: 8
+  skip_cnt: True
+
+  dense_cfg:
+    act_str: gelu
+    n_layers: 0
+    norm: True
+    nfactor: 2
+    
+  encoder_cfg:
+    ctxt_dim: ${..ctxt_upscale_dims}
+

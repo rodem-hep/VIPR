@@ -3,22 +3,24 @@ import pyrootutils
 
 root = pyrootutils.setup_root(search_from=__file__, pythonpath=True)
 from glob import glob
-from tools.visualization import general_plotting as plot
+from tools.tools.visualization import general_plotting as plot
 import matplotlib.pyplot as plt
 import os
 
-import hydra
 from copy import deepcopy
 import torch as T
 import numpy as np
 from tqdm import tqdm
 
 from src.eval_utils import get_percentile
-from run.run_flow import load_flow_from_path
+try:
+    from run.run_flow import load_flow_from_path
+except (ImportError, ModuleNotFoundError):
+    pass
 
-from tools import misc
-import tools.visualization.general_plotting as plot
-from tools.physics import relative_pos
+from tools.tools import misc
+import tools.tools.visualization.general_plotting as plot
+from tools.tools.physics import relative_pos
 
 class DictDataset(T.utils.data.Dataset):
     def __init__(self, data:dict):
@@ -34,10 +36,15 @@ class DictDataset(T.utils.data.Dataset):
 if __name__ == "__main__":
     # %matplotlib widget
     config = misc.load_yaml(str(root/"configs/eval_flow.yaml"))
+    
+    if 'drop' in list(config.path_lst.values())[0]:
+        config.data_path += "/drop_prob_0.1"
     obs_jets_paths = glob(f"{config.data_path}/*")
     
-    for mu in [200]:
-    # for mu in tqdm([50,60,70,80,90,100,150,200,250,300]):
+    
+    
+    # for mu in [300]:
+    for mu in tqdm([50,60,70,80,90,100,150,200,250,300]):
         
         pileup_name = f"mu_{mu}_std_{config.pileup_cfg.std}"
         
@@ -48,13 +55,16 @@ if __name__ == "__main__":
         # prepare data for flow
         eval_ctxt = deepcopy(obs_jets)
         truth_cnsts = eval_ctxt.pop("true_n_cnts")
-        eval_ctxt["scalars"] = eval_ctxt["scalars"][:, :-1]
+        eval_ctxt["scalars"][:, -1] = eval_ctxt["mask"].sum(-1)
 
-        eval_ctxt["cnts"] = relative_pos(eval_ctxt["cnts"], eval_ctxt["scalars"][:, :3],
-                                        eval_ctxt["mask"])
+        eval_ctxt["cnts"] = relative_pos(
+            eval_ctxt["cnts"], eval_ctxt["scalars"][:, :3], eval_ctxt["mask"],
+            pt_trans='log'
+            )
 
-        dataloader = T.utils.data.DataLoader(DictDataset(eval_ctxt), batch_size=80,
-                                             shuffle=False)
+        dataloader = T.utils.data.DataLoader(
+            DictDataset(eval_ctxt), batch_size=64, shuffle=False
+            )
         
         dev = "cuda" if T.cuda.is_available() else "cpu"
 
@@ -74,9 +84,10 @@ if __name__ == "__main__":
             if config.save_new_N_cnts:
                 save_path = f'{config.data_path}/flow_N/{path.split("/")[-1]}'
                 os.makedirs(save_path, exist_ok=True)
-
+                # sys.exit()
                 obs_jets["scalars"][:, -1] = np.ravel(pred_n)
                 np.save(f'{save_path}/{obs_jets_path.split("/")[-1]}', obs_jets)
+                continue
             else:
                 save_path = f"{path}/figures"
                 os.makedirs(save_path, exist_ok=True)

@@ -5,25 +5,24 @@ defaults:
 
   - trainer: default.yaml
   - data: default.yaml
-  - model: pc_diffusion.yaml
-  # - model: image_diffusion.yaml
-  # - eval: jet.yaml
-
-  # - eval: mnist_pc.yaml
-
-  - eval: default.yaml
-  # # - model: unet_cfg.yaml
-  # - model: u_perceiver_cfg.yaml
-
+  - paths: default.yaml
+  - model: classifier.yaml
+  # - model: pc_diffusion.yaml
+  - eval: jet.yaml
   - wandb: default.yaml
   - hydra: default.yaml
+  - callbacks: default.yaml
   - experiment: default.yaml
 
-path: /home/users/a/algren/scratch/trained_networks/diffgae/${wandb.mode}/
+seed: 42 # For reproducibility
+project_name: VIPR # Determines output directory path and wandb project
+# network_name: VIPR_top_jets_w_drop # Used for both saving and wandb
+network_name: PUPPIML_top_jets_w_drop # Used for both saving and wandb
+device: cuda # device to use on
+ckpt_path: null # Name of the checkpoint file, can use wildcards
 
-save_path: ${path}/${name}
-
-project: p_N_flow
-name: ${data.data_name}_${now:%Y_%m_%d}_${now:%H_%M_%S_%f}
-
-device: cuda
+# resume training
+resume:
+  path: null #${paths.full_path}/auto_decoding_image_fashion_mnist_2024_10_23_22_33_18_781986  # Checkpoint path to resume training
+  ckpt_flag: last.ckpt # Name of the checkpoint file, can use wildcards
+  set_wandb_resume: False # Set to True to resume wandb run

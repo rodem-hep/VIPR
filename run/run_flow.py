@@ -9,10 +9,10 @@ import torch as T
 
 from src.eval_utils import EvaluateFramework, get_percentile
 
-from tools.flows import Flow, stacked_norm_flow
-from tools.modules import IterativeNormLayer, MinMaxLayer
-from tools.omegaconf_utils import instantiate_collection
-from tools import misc
+from tools.tools.flows import Flow, stacked_norm_flow
+from tools.tools.modules import IterativeNormLayer, MinMaxLayer
+from tools.tools.omegaconf_utils import instantiate_collection
+from tools.tools import misc
 
 def load_flow_from_path(path:str, dev:str="cuda"):
     "load flow from path and return it"
@@ -25,18 +25,18 @@ def load_flow_from_path(path:str, dev:str="cuda"):
     return flow
 
 class TransFlow(Flow):
-    def __init__(self, data_dims:dict, flow_conf:dict, embed_conf:dict,
-                 dense_conf: dict, train_conf:dict, device="cuda", **kwargs):
-        super().__init__(train_conf)
+    def __init__(self, data_dims:dict, flow_cfg:dict, embed_cfg:dict,
+                 dense_cfg: dict, train_cfg:dict, device="cuda", **kwargs):
+        super().__init__(train_cfg)
 
         # save hyperparameters
         # self.save_hyperparameters()
 
         self.data_dims = data_dims
-        self.flow_conf = flow_conf
-        self.train_conf = train_conf
-        self.embed_conf = embed_conf
-        self.dense_conf = dense_conf
+        self.flow_cfg = flow_cfg
+        self.train_cfg = train_cfg
+        self.embed_cfg = embed_cfg
+        self.dense_cfg = dense_cfg
         self.target_norm = kwargs.get("target_norm", "minmax")
         self.get_network()
         self.to(device)
@@ -54,9 +54,17 @@ class TransFlow(Flow):
         
         
     def get_network(self):
+        # init flow and embedding network
+        self.flow = stacked_norm_flow(**self.flow_cfg).to(self.device)
+        self.embed = self.embed_cfg(dense_cfg = self.dense_cfg)
+
         # Initialise the individual normalisation layers
         self.cnsts_normaliser = IterativeNormLayer((1,self.data_dims["cnts"]), max_iters=50_000)
         self.scalars_normaliser = IterativeNormLayer((1, self.data_dims["scalars"]), max_iters=50_000)
+        
+        # initialise ctxt linear layer
+        self.ctxt_linear = T.nn.Linear(self.data_dims.scalars, self.embed.encoder.ctxt_dim)
+
         if self.target_norm=="minmax":
             self.minmax = MinMaxLayer(np.array([[0]]), np.array([[200]]),
                                     feature_range=[-4,4])
@@ -65,8 +73,6 @@ class TransFlow(Flow):
         else:
             raise ValueError(f"target_norm {self.target_norm} not recognised")
 
-        self.flow = stacked_norm_flow(**self.flow_conf).to(self.device)
-        self.embed = self.embed_conf()
 
     def get_embed(self, ctxt:dict):
 
@@ -77,6 +83,7 @@ class TransFlow(Flow):
 
         if "scalars" in ctxt:
             ctxt["scalars"] = self.scalars_normaliser(ctxt["scalars"].to(self.device))
+            ctxt["scalars"] = self.ctxt_linear(ctxt["scalars"])
 
         # run embedding and return
         return self.embed(x=ctxt["cnts"], mask=ctxt["mask"], ctxt=ctxt["scalars"])
@@ -88,10 +95,10 @@ class TransFlow(Flow):
 
         # narrow gauss to make discrete values continuous
         # smear by N(0,0.5)
-        randn = T.rand_like(batch["images"]).to(self.device)*0.5
+        randn = T.rand_like(batch["inpt"]).to(self.device)*0.5
 
         # minmax with narrow noise
-        x = self.minmax(batch["images"].to(self.device)+randn)
+        x = self.minmax(batch["inpt"].to(self.device)+randn)
 
         # run embedding
         if "ctxt" in batch:
@@ -130,7 +137,7 @@ class TransFlow(Flow):
         
         # save for end validation
         self.validation_step_outputs.extend(pred_N.cpu().detach())
-        self.validation_step_truth.extend(batch["images"].cpu().detach())
+        self.validation_step_truth.extend(batch["inpt"].cpu().detach())
         
         # get posterior
         pred_N = self.sample(batch["ctxt"].copy(), n=512)
@@ -206,7 +213,7 @@ def main(config:dict):
                                             loader_config=config.data.loader_config,
                                             )
     # init network
-    config.model.train_conf.sch_config.T_max=len(train_loader)*config.model.train_conf.epochs
+    config.model.train_cfg.sch_config.T_max=len(train_loader)*config.model.train_cfg.epochs
     network=hydra.utils.instantiate(config.model)
     
     # init callbacks

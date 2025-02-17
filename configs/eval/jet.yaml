@@ -3,3 +3,5 @@ _convert_: object
 
 jet_path: ["/home/users/a/algren/scratch/diffusion/pileup/ttbar_processed.csv"]
 pileup_path: null
+
+target_names: [eta, phi, pt]
