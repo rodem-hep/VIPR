@@ -58,7 +58,7 @@ if __name__ == "__main__":
     #                    }
     vipr_eval_files = {
         "VIPR":f"{eval_fw.path_to_model}/eval_files/flow_N/{config.eval_VIPR.flow_path}/post/flow_N/jet_subs/",
-        "PUPPIML":f"{eval_fw_clf.path_to_model}/eval_files/",
+        "PuppiML":f"{eval_fw_clf.path_to_model}/eval_files/",
 
                        }
     
@@ -86,7 +86,7 @@ if __name__ == "__main__":
 
     # get VIPR for both N and p(N)
     for label, i in vipr_eval_files.items():
-        if label == "PUPPIML":
+        if label == "PuppiML":
             probs_cut = str(config.eval_clf.probs_cut).replace('.', '_')
             path_to_load = glob(f"{i}/jet_subs/*{config.csv_sample_to_load}{name}*{probs_cut}*.h5")[0]
         else:
@@ -103,7 +103,7 @@ if __name__ == "__main__":
             generated["eventNumber"] = np.repeat(np.arange(len(generated)//512),512)
         posteriors_dict[label] = generated
     
-    puppiml = posteriors_dict.pop('PUPPIML')
+    puppiml = posteriors_dict.pop('PuppiML')
 
     percentile_dict = {}
     for name,generated in posteriors_dict.items():
@@ -164,7 +164,7 @@ if __name__ == "__main__":
 
             ax_inte.legend(frameon=False, title=name)
             ax_inte.text(0.3, 0.8, 'Underconfident', size=20, rotation=0)
-            ax_inte.text(0.3, 0.10, 'Overconfident', size=20, rotation=0)
+            ax_inte.text(0.2, 0.10, 'Overconfident', size=20, rotation=0)
             ax_inte.set_xlabel("Nominal coverage")
             ax_inte.set_xlim([0,1])
             ax_inte.set_ylim([0,1])

@@ -681,7 +681,7 @@ if __name__ == "__main__":
             [{"color": "red", "label": "Obs. jet"},
             {"color": "green", "label": "SoftDrop"},
             {"color": "blue", "label": "VIPR"},
-            {"color": "orange", "label": "PUPPIML"},
+            {"color": "orange", "label": r"PuppiML $p_{HS} \geq 0.3$"},
             ],
             ["obs", "sd", "vipr", "puppiml"],
             [1,1,8,8]
@@ -722,8 +722,9 @@ if __name__ == "__main__":
                 ax2 = ax.twinx()
                 ax2.axis('off')
 
-                ax2.legend(handles=markers,#bbox_to_anchor=(0.5, 1.1),
+                ax2.legend(handles=markers, bbox_to_anchor=(1.00, 0.975),
                             loc='lower right',
+                            ncols=1,
                             # title=r"p$_T$ scaling [GeV]",
                             frameon=False#, ncol=len(markers)
                             )
@@ -734,6 +735,7 @@ if __name__ == "__main__":
                 ax.set_xlim(min_vals[0], max_vals[0])
                 ax.set_xlabel(r"$\eta$")
                 ax.set_ylabel(r"$\phi$")
-                ax.legend(frameon=False, loc="upper left")
+                ax.legend(frameon=False, loc="lower left",
+                          bbox_to_anchor=(-0.05, 0.975))
                 if save_figs:
                     misc.save_fig(fig, f"{save_path}/imgs/scatter_images_{name}_{idx}.pdf")

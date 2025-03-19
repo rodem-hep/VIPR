@@ -129,7 +129,8 @@ if __name__ == "__main__":
 
     hist_kwargs['legend_kwargs'] = {'loc': 'upper right', 'frameon': False}
     # jet substructure
-    for nr, percentile in enumerate([[0.01,98],[0.01,98],[0.01,98],[0.01,98],[0.01,98],[0.01,98]]):
+    for nr, percentile in enumerate([[0.01,98],[0.01,98],[0.01,98],[0.01,98],[0.01,98],[0.01,98],
+                                     [0.01,98]]):
         # hist_kwargs.pop("style", None)
         # hist_kwargs['style'].pop('bins', None)
         hist_kwargs['style'].pop('range', None)
@@ -261,13 +262,6 @@ if __name__ == "__main__":
                 else:
                     additional_name = '_compare_puppiml'
                     
-
-                for j, line in zip(vipr_mu, ["solid", "dashed"]):
-                    ax_m.plot(mu_lst, vipr_mu[j]["median"][i, :],label=j,
-                                color="blue", ls=line, lw=lw)
-                    ax.plot(mu_lst, vipr_mu[j]["width"][i, :],label=j,
-                            color="blue", ls=line, lw=lw)
-
                 # plot n sd parameters
                 if True: # plot the envolope of all sd parameters
                     for dist in benchmarks:
@@ -282,7 +276,7 @@ if __name__ == "__main__":
                             else:
                                 color = 'orange'
                                 pred = dist["0_3"][key]
-                                legend_name = "PuppiML cut = 0.3"
+                                legend_name = "PuppiML $p_{HS} \geq 0.3$"
                                 legend_label='PuppiML'
                                 ax_i.plot(mu_lst, pred[i, :], label=legend_name, color=color,
                                         ls='dotted', lw=lw)
@@ -317,6 +311,14 @@ if __name__ == "__main__":
                                     ls=ls_lst[nr][1], lw=lw)
                         ax.plot(mu_lst, puppi_mu[j]["width"][i, :],label=f"PUPPI: {legend_name}", #color="orange",
                                 ls=ls_lst[nr][1], lw=lw)
+                        
+
+                for j, line in zip(vipr_mu, ["solid", "dashed"]):
+                    ax_m.plot(mu_lst, vipr_mu[j]["median"][i, :],label=j,
+                                color="blue", ls=line, lw=lw)
+                    ax.plot(mu_lst, vipr_mu[j]["width"][i, :],label=j,
+                            color="blue", ls=line, lw=lw)
+
 
                 for ax_i,j in zip([ax, ax_m], ["IQR", "Bias"]):
                     # if 'Bias' in j and len(benchmarks)==1:
@@ -336,7 +338,7 @@ if __name__ == "__main__":
                     else:
                         ax_i.set_ylim([ylim[0]*top_y, ylim[1]*top_y])
 
-                    ax_i.legend(frameon=False, loc='best')#, bbox_to_anchor=(1.6, 1.2))
+                    ax_i.legend(frameon=False, loc='best', title=r"$\epsilon_{\mathrm{det}} = 90\%$")#, bbox_to_anchor=(1.6, 1.2))
                 # ax_m.set_ylim([-0.1, 1])
                 plt.tight_layout()
 

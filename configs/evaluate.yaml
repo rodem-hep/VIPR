@@ -12,9 +12,9 @@ n_post_to_gen: 1 # >1 generate posterior
 combine_ctxt_size: 1
 csv_sample_to_load: single #posterior_${eval.size} #single 
 plot_images: True
-save_figures: True
+save_figures: False
 softdrop_path: /srv/beegfs/scratch/groups/rodem/pileup_diffusion/data/
-predict_str: eval_VIPR
+predict_str: eval_VIPR_dp
 
 # general settings
 size: 100_000 # 100_000 / 2000
@@ -28,15 +28,15 @@ loader_config:
 data_cfg: 
   pileup_dist_args:
     mu: 200 # 50, 60, 70, 80, 90, 100, 150, 200, 250, 300
-    std: 50 # 50 or 0 
+    std: 0 # 50 or 0 
 
 # how to run eval fw
 eval_clf:
   _target_: run.plot_eval.EvaluatePhysics
 
-  path_to_model: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/PUPPIML_top_jets_pileup_jet_2024_12_09_22_33_30_673870 #wo dp
+  # path_to_model: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/PUPPIML_top_jets_pileup_jet_2024_12_09_22_33_30_673870 #wo dp
 
-  # path_to_model: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/PUPPIML_top_jets_w_drop_pileup_jet_2025_01_13_09_57_05_749162 # with dp 10%
+  path_to_model: /srv/beegfs/scratch/groups/rodem/VIPR/online/VIPR/PUPPIML_top_jets_w_drop_pileup_jet_2025_01_13_09_57_05_749162 # with dp 10%
 
   path_lst:
     N(200, 50): ${..path_to_model}
